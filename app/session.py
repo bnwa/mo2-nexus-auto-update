@@ -1,9 +1,10 @@
 """State of one updater session: what can be updated and how far each update got."""
 
+from collections import deque
 from dataclasses import dataclass, replace
 from enum import Enum
 from itertools import count
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Deque, Dict, List, Optional
 
 from ..domain.files import ModFile
 from ..domain.selection import Verdict
@@ -25,6 +26,7 @@ class EntryStatus(Enum):
 
 class Phase(Enum):
     IDLE = "idle"
+    QUEUED = "queued"
     DOWNLOADING = "downloading"
     DOWNLOADED = "downloaded"
     DOWNLOAD_FAILED = "download_failed"
@@ -75,10 +77,18 @@ EntryListener = Callable[[UpdateEntry], None]
 
 
 class UpdateSession:
-    def __init__(self, downloader: Downloader, installer: Installer, tracker: DownloadTracker):
+    def __init__(
+        self,
+        downloader: Downloader,
+        installer: Installer,
+        tracker: DownloadTracker,
+        max_concurrent_downloads: int,
+    ):
         self._downloader = downloader
         self._installer = installer
         self._tracker = tracker
+        self._max_downloads = max_concurrent_downloads
+        self._queue: Deque[EntryKey] = deque()
         self._entries: Dict[EntryKey, UpdateEntry] = {}
         self._matchers: Dict[EntryKey, ArchiveMatcher] = {}
         self._awaiting: Dict[Ticket, EntryKey] = {}
@@ -136,20 +146,13 @@ class UpdateSession:
         return added
 
     def download(self, key: EntryKey) -> None:
+        """Queue a download; it starts once fewer than the maximum are in flight."""
         entry = self._entries[key]
-        if not entry.can_download or entry.target is None:
+        if not entry.can_download:
             return
-        # Archive-name matching is only a fallback to the host's metadata, so a
-        # source that offers none still works.
-        matcher = self._matchers.get(key)
-        ticket = self._tracker.expect(
-            entry.mod_id,
-            entry.target.file_id,
-            matcher.matches if matcher is not None else _never,
-        )
-        self._awaiting[ticket] = key
-        self._update(key, phase=Phase.DOWNLOADING, archive_path="")
-        self._downloader.start_nexus_download(entry.mod_id, entry.target.file_id)
+        self._queue.append(key)
+        self._update(key, phase=Phase.QUEUED, archive_path="")
+        self._start_queued()
 
     def install(self, key: EntryKey) -> None:
         entry = self._entries[key]
@@ -163,8 +166,27 @@ class UpdateSession:
         for ticket in self._awaiting:
             self._tracker.cancel(ticket)
         self._awaiting.clear()
+        self._queue.clear()
         self._tracker.set_listener(None)
         self._listener = None
+
+    def _start_queued(self) -> None:
+        while self._queue and len(self._awaiting) < self._max_downloads:
+            key = self._queue.popleft()
+            entry = self._entries[key]
+            target = entry.target
+            assert target is not None  # Guaranteed by can_download when queued.
+            # Archive-name matching is only a fallback to the host's metadata, so a
+            # source that offers none still works.
+            matcher = self._matchers.get(key)
+            ticket = self._tracker.expect(
+                entry.mod_id,
+                target.file_id,
+                matcher.matches if matcher is not None else _never,
+            )
+            self._awaiting[ticket] = key
+            self._update(key, phase=Phase.DOWNLOADING)
+            self._downloader.start_nexus_download(entry.mod_id, target.file_id)
 
     def _add(self, entry: UpdateEntry, matcher: Optional[ArchiveMatcher]) -> UpdateEntry:
         self._entries[entry.key] = entry
@@ -186,6 +208,7 @@ class UpdateSession:
             self._update(key, phase=Phase.DOWNLOADED, archive_path=archive_path)
         else:
             self._update(key, phase=Phase.DOWNLOAD_FAILED)
+        self._start_queued()
 
 
 def _never(_file_name: str) -> bool:

@@ -23,6 +23,7 @@ STATUS_COLORS = {
     EntryStatus.UP_TO_DATE: "#7f8c8d",
 }
 PHASE_TEXT = {
+    Phase.QUEUED: "Queued",
     Phase.DOWNLOADING: "Downloading",
     Phase.DOWNLOADED: "Downloaded",
     Phase.DOWNLOAD_FAILED: "Download failed",
@@ -30,6 +31,7 @@ PHASE_TEXT = {
     Phase.INSTALL_CANCELLED: "Install cancelled",
 }
 PHASE_COLORS = {
+    Phase.QUEUED: "#45beef",
     Phase.DOWNLOADING: "#45beef",
     Phase.DOWNLOADED: "#45beef",
     Phase.DOWNLOAD_FAILED: "#e74c3c",

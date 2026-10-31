@@ -53,7 +53,7 @@ Hover over a cell for more detail: file IDs, MO2's recorded versions, and the fu
 | **Skipped** | The plugin can't download for this mod (for example it belongs to a different game than the one MO2 is managing). |
 | **Error** | Nexus couldn't be asked about this mod (network trouble, hidden mod, etc.). |
 
-After an action starts, the status shows its progress instead: **Downloading**, **Downloaded**, **Download failed**, **Installed**, **Install cancelled**.
+After an action starts, the status shows its progress instead: **Queued**, **Downloading**, **Downloaded**, **Download failed**, **Installed**, **Install cancelled**.
 
 A mod installed from several Nexus files (for example a main file plus an optional add-on) gets one row per file.
 
@@ -65,6 +65,7 @@ In MO2, open **Settings → Plugins → Nexus Auto Updater**:
 |---|---|---|
 | `scan_all_nexus_mods` | off | Check every Nexus mod, not only the ones MO2 flags as outdated. Useful when MO2's update check is stale, but slower. |
 | `request_delay_ms` | 250 | Minimum delay between requests to Nexus, in milliseconds. Raise it if Nexus rate-limits you. |
+| `max_concurrent_downloads` | 3 | Maximum number of downloads running at once. The rest wait as **Queued** and start as earlier ones finish. Read when the tool is opened; reopen it after changing this. |
 
 ## Troubleshooting
 

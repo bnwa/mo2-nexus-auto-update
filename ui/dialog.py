@@ -270,7 +270,7 @@ class UpdaterDialog(QDialog):
             return
         total = len(batch)
         phases = [self._entries[key].phase for key in batch]
-        done = sum(1 for phase in phases if phase is not Phase.DOWNLOADING)
+        done = sum(1 for phase in phases if phase not in (Phase.QUEUED, Phase.DOWNLOADING))
         if done < total:
             self._progress.setRange(0, total)
             self._progress.setValue(done)
@@ -295,7 +295,7 @@ class UpdaterDialog(QDialog):
                 continue
             if not self._entries[key].can_download:
                 continue
-            # Add first: the session reports the DOWNLOADING change synchronously.
+            # Add first: the session reports the QUEUED change synchronously.
             self._download_batch.add(key)
             self._session.download(key)
         self._update_buttons()

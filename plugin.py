@@ -17,6 +17,8 @@ from .tracking.tracker import DownloadTracker
 SETTING_SCAN_ALL = "scan_all_nexus_mods"
 SETTING_REQUEST_DELAY = "request_delay_ms"
 DEFAULT_REQUEST_DELAY_MS = 250
+SETTING_MAX_DOWNLOADS = "max_concurrent_downloads"
+DEFAULT_MAX_DOWNLOADS = 3
 
 
 class NexusAutoUpdater(mobase.IPluginTool):
@@ -70,6 +72,11 @@ class NexusAutoUpdater(mobase.IPluginTool):
                 "Delay between Nexus API requests (milliseconds)",
                 DEFAULT_REQUEST_DELAY_MS,
             ),
+            mobase.PluginSetting(
+                SETTING_MAX_DOWNLOADS,
+                "Maximum simultaneous downloads (read when the tool is opened)",
+                DEFAULT_MAX_DOWNLOADS,
+            ),
         ]
 
     # --- IPluginTool ---
@@ -96,7 +103,9 @@ class NexusAutoUpdater(mobase.IPluginTool):
         # The only place that knows the file source is Nexus v2 (beta).
         source = NexusV2FileSource(GraphQLClient(min_interval_s=self._request_delay_ms() / 1000))
         plan = ScanPlan(source, self._host.managed_game(), self._host.nexus_mods(not scan_all))
-        session = UpdateSession(self._host, self._host, self._tracker)
+        session = UpdateSession(
+            self._host, self._host, self._tracker, self._max_concurrent_downloads()
+        )
 
         dialog = UpdaterDialog(
             self._parent_widget,
@@ -128,3 +137,9 @@ class NexusAutoUpdater(mobase.IPluginTool):
             return max(0, int(self._setting(SETTING_REQUEST_DELAY)))
         except (TypeError, ValueError):
             return DEFAULT_REQUEST_DELAY_MS
+
+    def _max_concurrent_downloads(self) -> int:
+        try:
+            return max(1, int(self._setting(SETTING_MAX_DOWNLOADS)))
+        except (TypeError, ValueError):
+            return DEFAULT_MAX_DOWNLOADS

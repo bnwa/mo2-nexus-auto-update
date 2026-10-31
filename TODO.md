@@ -6,13 +6,15 @@ Open issues and ideas, roughly in priority order. See [`ARCH.md`](ARCH.md) for w
 
 - [ ] **Run the current code in MO2 end to end.** A full update (Actor Value Generator, 2.2.9.4 → 2.3.6.0) worked with the first prototype. Since then the code was split into layers, hardened for the beta API, and the header checkbox and progress-bar changes were added. None of that has been run inside MO2 yet: the logic was tested outside MO2, and the Qt dialog was only import-checked. Check: scan, select-all header, progress bar hiding after scan and after downloads, download matching, install.
 - [ ] **Add a permanent test suite** (e.g. `tests/`, runnable outside MO2 with stand-in `mobase`/Qt modules). Cover: the dependency rules between layers, the successor policy including incomplete data, error classification using the live API's response shapes, the scan's early-stop rules, the tracker's matching rules and retries, and session lifecycle. The checks so far were throwaway scripts.
+- [ ] **Test the download queue (`max_concurrent_downloads`).** The feature has had no test coverage and has not been run in MO2. Cover `UpdateSession` with a fake `Downloader` and the real `DownloadTracker`: never more than the limit in flight, a limit of 1 runs strictly in order, both a success and a failure start the next queued entry, `close()` clears the queue, and a re-queued row can't be queued twice. Also check in MO2 that the dialog's progress bar counts `Queued` rows as unfinished.
 - [ ] **Confirm `IPluginGame.nexusGameID()`** returns the numeric v2 game ID (1704 for Skyrim SE). The adapter resolves the ID from the game's domain name when this returns 0, but a wrong non-zero value would not be detected.
 
 ## Download matching
 
 - [ ] **`.meta` timing is a guess.** The tracker re-reads an archive's `.meta` for about 1.75 s, assuming MO2 sometimes reports completion before writing `fileID`. Observe MO2 2.5.2's actual timing and adjust `DEFAULT_RETRY_DELAYS_MS` in `tracking/tracker.py`.
 - [ ] **Duplicate-download naming is a guess.** `nexus/archives.py` ignores a trailing `(1)`-style suffix. Confirm how MO2 names a second download of the same file.
-- [ ] **Unmatched downloads stay on "Downloading"** and keep the progress bar visible until the dialog closes. By decision there is no "Locate archive…" action, because users can update manually. A timeout that marks the row as unmatched and releases the progress count could still be worth adding (`app/session.py` plus `ui/dialog.py`).
+- [ ] **The download limit is read once per dialog.** Changing `max_concurrent_downloads` while the tool is open has no effect until it is reopened, because `plugin.py` passes the value to `UpdateSession` at construction. Re-reading it per download would need a narrow provider callable passed in instead of an `int`.
+- [ ] **Unmatched downloads stay on "Downloading"** and keep the progress bar visible until the dialog closes. They also hold one of the `max_concurrent_downloads` slots, so queued rows can stall behind them (worst at a limit of 1). By decision there is no "Locate archive…" action, because users can update manually. A timeout that marks the row as unmatched and releases the progress count could still be worth adding (`app/session.py` plus `ui/dialog.py`).
 
 ## Nexus v2 API (beta)
 

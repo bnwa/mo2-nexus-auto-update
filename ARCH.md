@@ -88,7 +88,7 @@ It is pure Python: reading metadata (`read_archive_ids`) and scheduling retries 
 - `scan.py`: `ScanPlan` is a blocking, interruptible generator of events (`ScanProgress`, `ModScanned`, `ScanFailed`) suitable for running off the UI thread. It skips mods the host can't download for, applies the domain policy to each listing, and stops early:
   - at the first `SourceIncompatible` (every remaining request would fail the same way);
   - after 3 consecutive `SourceUnavailable` (the source is presumed down).
-- `session.py`: `UpdateSession` owns the session's read model — one `UpdateEntry` per installed file, with `EntryStatus` (what the scan concluded) and `Phase` (download/install progress). It owns the mapping from tracker tickets to entries, starts downloads and installs through the ports, and notifies one subscriber when an entry changes. `close()` withdraws its expectations from the tracker, which outlives sessions.
+- `session.py`: `UpdateSession` owns the session's read model — one `UpdateEntry` per installed file, with `EntryStatus` (what the scan concluded) and `Phase` (download/install progress). It owns the mapping from tracker tickets to entries, starts downloads and installs through the ports, and notifies one subscriber when an entry changes. Downloads are queued (`Phase.QUEUED`) and started only while fewer than `max_concurrent_downloads` are in flight; each resolved download starts the next queued one. `close()` withdraws its expectations from the tracker, which outlives sessions.
 
 ### `nexus/` — Nexus v2 adapter
 
@@ -156,13 +156,16 @@ sequenceDiagram
     participant T as tracking.DownloadTracker
     participant H as host.Mo2Host
     UI->>S: download(key)
+    S-->>UI: entry changed (QUEUED)
+    Note over S: starts queued entries while in flight < max_concurrent_downloads
     S->>T: expect(mod_id, file_id, matcher) -> ticket
-    S->>H: start_nexus_download(mod_id, file_id)
     S-->>UI: entry changed (DOWNLOADING)
+    S->>H: start_nexus_download(mod_id, file_id)
     H-->>T: download_finished(archive_path, succeeded)
     T->>T: match: .meta file ID, archive name, unique mod ID, retry
     T-->>S: resolved(ticket, archive_path, succeeded)
     S-->>UI: entry changed (DOWNLOADED / DOWNLOAD_FAILED)
+    Note over S: a freed slot starts the next queued entry
     UI->>S: install(key)
     S->>H: install_archive(path, mod name)
     S-->>UI: entry changed (INSTALLED / INSTALL_CANCELLED)
