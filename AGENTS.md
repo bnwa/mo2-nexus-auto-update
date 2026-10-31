@@ -1,3 +1,5 @@
+You are working on a plugin for Mod Organizer 2 exclusively concerned with updating mods installed via Nexus Mods' intergration with Mod Organize 2.
+
 ## Engineering Style
 
 - Change the least amount of files possible. A change that touches many files is
