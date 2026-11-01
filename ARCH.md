@@ -210,17 +210,4 @@ sequenceDiagram
 - `ui/`, `plugin.py` and `__init__.py` are tested with real PyQt6, offscreen. Without PyQt6 those tests are skipped and the rest still run.
 - `app` uses fake ports (`tests/fakes.py`) with the real `DownloadTracker`; `nexus` patches `urlopen`; `host` uses a fake organizer and real temp files. No test touches the network, except `tests/test_nexus_live.py`, which runs only with `NEXUS_LIVE_TESTS=1`.
 
-Setup (PyQt6 6.7.1 matches MO2 2.5.2), from the repo root:
-
-```
-<Python 3.12>\python.exe -m venv .venv
-.venv\Scripts\python -m pip install -r tests\requirements.txt
-```
-
-Run, and measure coverage:
-
-```
-.venv\Scripts\python -m unittest discover -s tests -t .
-.venv\Scripts\python -m coverage run --branch --source=. --omit="tests/*,.venv/*" -m unittest discover -s tests -t .
-.venv\Scripts\python -m coverage report -m
-```
+Setup and the commands to run the tests and measure coverage are in [`CONTRIB.md`](CONTRIB.md).
