@@ -35,9 +35,14 @@ You are working on a plugin for Mod Organizer 2 exclusively concerned with updat
 
 ## Commit and Review Habits
 
-- If asked to write commit messages, use short direct subjects like the existing
-  history: `Fix ...`, `Add ...`, `Support ...`, `Remove ...`, `Update ...`,
-  `Make ...`, `Use ...`, `Disable ...`, `Bump ...`, or `Revert ...`.
+- If asked to write commit messages, follow the Conventional Commits standard:
+  `<type>[optional scope][!]: <description>`, e.g. `feat: add per-mod version
+  locks` or `fix(nexus): retry without dropped fields`. Use the types `feat`,
+  `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `style` or
+  `revert`. Write the description in the lowercase imperative with no trailing
+  period. Scope, when used, names the layer (`domain`, `tracking`, `app`,
+  `nexus`, `host`, `ui`). Mark breaking changes with `!` and a
+  `BREAKING CHANGE:` footer.
 - Keep PR descriptions short and reviewable. State the problem, the behavioral
   change, and the tests run; avoid long narrative explanations, implementation
   diaries, or exhaustive file-by-file summaries unless the reviewer explicitly
