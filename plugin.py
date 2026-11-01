@@ -6,6 +6,7 @@ import mobase
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QIcon
 
+from .app.notes import ModNotes
 from .app.scan import ScanPlan
 from .app.session import UpdateSession
 from .host.metadata import read_archive_ids
@@ -102,7 +103,8 @@ class NexusAutoUpdater(mobase.IPluginTool):
         scan_all = bool(self._setting(SETTING_SCAN_ALL))
         # The only place that knows the file source is Nexus v2 (beta).
         source = NexusV2FileSource(GraphQLClient(min_interval_s=self._request_delay_ms() / 1000))
-        plan = ScanPlan(source, self._host.managed_game(), self._host.nexus_mods(not scan_all))
+        game = self._host.managed_game()
+        plan = ScanPlan(source, game, self._host.nexus_mods(not scan_all))
         session = UpdateSession(
             self._host, self._host, self._tracker, self._host, self._max_concurrent_downloads()
         )
@@ -111,6 +113,7 @@ class NexusAutoUpdater(mobase.IPluginTool):
             self._parent_widget,
             plan,
             session,
+            ModNotes(source, game),
             scope_label="all Nexus mods" if scan_all else "mods MO2 flags as having an update",
             empty_message=(
                 "No mods to check. MO2 has not flagged any Nexus mod as outdated — run "

@@ -67,6 +67,8 @@ The successor policy:
 4. Otherwise (file not listed, no group, retired file with an empty lineage): if the mod has exactly one primary MAIN file, suggest it → `REVIEW`; else `UNRESOLVED`.
 5. **Incomplete data never yields `READY` or `UP_TO_DATE`.** If the installed file or any possibly-newer file in its group has an unknown category or upload time, a found successor is downgraded to `REVIEW`, and "nothing newer" becomes `UNRESOLVED`.
 
+Each `Selection` also carries `newer_files`: every file that may supersede the installed one, newest first, so the user can read the notes of versions an update would skip over.
+
 `plan_updates()` applies this per installed file (a mod can be installed from several files) and never proposes the same target twice.
 
 ### `tracking/` — correlating downloads
@@ -84,10 +86,11 @@ It is pure Python: reading metadata (`read_archive_ids`) and scheduling retries 
 
 - `ports.py` defines what the application needs from the outside world:
   - Host side: `GameRef`, `InstalledMod`, `Downloader`, `Installer`, `ModLocks`.
-  - File source: `ModFileSource.list_files(game, mod_id) -> FileListing`, `ArchiveMatcher`, and the error types `SourceError` (this mod failed), `SourceUnavailable` (transient), `SourceIncompatible` (the source's contract changed).
+  - File source: `ModFileSource.list_files(game, mod_id) -> FileListing`, `mod_page_url`, `mod_description`, `ArchiveMatcher`, and the error types `SourceError` (this mod failed), `SourceUnavailable` (transient), `SourceIncompatible` (the source's contract changed).
 - `scan.py`: `ScanPlan` is a blocking, interruptible generator of events (`ScanProgress`, `ModScanned`, `ScanFailed`) suitable for running off the UI thread. It skips mods the host can't download for, applies the domain policy to each listing, and stops early:
   - at the first `SourceIncompatible` (every remaining request would fail the same way);
   - after 3 consecutive `SourceUnavailable` (the source is presumed down).
+- `notes.py`: `ModNotes` reads a mod's page URL and description (blocking, cached) for the notes pane.
 - `session.py`: `UpdateSession` owns the session's read model — one `UpdateEntry` per installed file, with `EntryStatus` (what the scan concluded) and `Phase` (download/install progress). It owns the mapping from tracker tickets to entries, starts downloads and installs through the ports, and notifies one subscriber when an entry changes. Downloads are queued (`Phase.QUEUED`) and started only while fewer than `max_concurrent_downloads` are in flight; each resolved download starts the next queued one. `close()` withdraws its expectations from the tracker, which outlives sessions. Entries of a Nexus mod the user locked (`set_locked`, persisted through `ModLocks`) keep their scan verdict but can't be downloaded or installed; locking dequeues queued downloads.
 
 ### `nexus/` — Nexus v2 adapter
@@ -98,7 +101,7 @@ It is pure Python: reading metadata (`read_archive_ids`) and scheduling retries 
   - `RequestError`: the API understood but rejected the request (e.g. `GAME_NOT_FOUND`, `INVALID`).
 
   v2 returns HTTP 200 for GraphQL errors, so classification uses `errors[].extensions.code`.
-- `catalog.py`: `NexusV2FileSource` implements `ModFileSource`. It resolves and caches numeric game IDs, maps v2 fields and enum spellings onto `ModFile`, and maps transport errors onto port errors (`TransientError` → `SourceUnavailable`, `SchemaError` → `SourceIncompatible`, `RequestError` → `SourceError`, `GAME_NOT_FOUND` → `SourceIncompatible`). Parsing is defensive: optional fields degrade to unknown; a missing `fileId` or a non-list `modFiles` is treated as a contract change.
+- `catalog.py`: `NexusV2FileSource` implements `ModFileSource`. It resolves and caches numeric game IDs, maps v2 fields and enum spellings onto `ModFile`, and maps transport errors onto port errors (`TransientError` → `SourceUnavailable`, `SchemaError` → `SourceIncompatible`, `RequestError` → `SourceError`, `GAME_NOT_FOUND` → `SourceIncompatible`). Parsing is defensive: optional fields degrade to unknown; if the schema rejects the file notes (`description`, `changelogText`), the session continues without them; a missing `fileId` or a non-list `modFiles` is treated as a contract change.
 - `archives.py`: `ArchiveFingerprint` (satisfies `ArchiveMatcher`) encodes Nexus archive naming:
   - Legacy uploads: `<name>-<modid>-<version>-<timestamp>.<ext>`, equal to v2's `uri`.
   - Newer uploads: `<name> <modid> <version> <YYYY-MM-DDTHH-MMZ> <sqid>.<ext>`. Here v2's `uri` is an opaque storage path, so the trailing `sqid` is the identifier.
@@ -117,6 +120,7 @@ It is pure Python: reading metadata (`read_archive_ids`) and scheduling retries 
 - `dialog.py`: `UpdaterDialog` receives a `ScanPlan`, an `UpdateSession` and two strings. It owns purely presentational state: which table row shows which entry key, the latest entry snapshots, which entries the progress bar is counting, and the checkbox selection.
 - `scan_worker.py`: runs `ScanPlan.run()` on a `QThread` and forwards events as a signal. Session calls happen on the GUI thread.
 - `header.py`: the select-all checkbox header.
+- `notes.py`: `NotesPane` shows the selected row's file descriptions, changelogs and mod page, fetching the page on a daemon thread. Author markup (BBCode mixed with HTML) is escaped and only links (http/https) and basic styles are rebuilt.
 - `text.py`: all display strings and colours for `EntryStatus`, `Phase`, files, and scan-stop reasons.
 
 ### `plugin.py` — composition root

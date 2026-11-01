@@ -12,15 +12,18 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
 )
 
+from ..app.notes import ModNotes
 from ..app.scan import ModScanned, ScanFailed, ScanPlan, ScanProgress
 from ..app.session import EntryKey, EntryStatus, Phase, UpdateEntry, UpdateSession
 from . import text
 from .header import CenteredCheckDelegate, CheckableHeader
+from .notes import NotesPane
 from .scan_worker import ScanWorker
 
 COL_CHECK, COL_LOCK, COL_MOD, COL_INSTALLED, COL_TARGET, COL_STATUS, COL_DETAILS = range(7)
@@ -33,6 +36,7 @@ class UpdaterDialog(QDialog):
         parent,
         plan: ScanPlan,
         session: UpdateSession,
+        notes: ModNotes,
         *,
         scope_label: str,
         empty_message: str,
@@ -53,7 +57,7 @@ class UpdaterDialog(QDialog):
         self._download_batch: Set[EntryKey] = set()
 
         self.setWindowTitle("Nexus Auto Updater")
-        self.resize(1150, 620)
+        self.resize(1150, 760)
 
         self._summary = QLabel(f"Checking {plan.total} {scope_label} against Nexus…")
         self._summary.setWordWrap(True)
@@ -86,6 +90,14 @@ class UpdaterDialog(QDialog):
             self._table.setColumnWidth(column, 250)
         header.setSectionResizeMode(COL_STATUS, QHeaderView.ResizeMode.ResizeToContents)
         header.setStretchLastSection(True)
+        self._table.currentCellChanged.connect(self._on_current_row_changed)
+
+        self._notes = NotesPane(notes)
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.addWidget(self._table)
+        splitter.addWidget(self._notes)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
 
         self._download_button = QPushButton("Download checked")
         self._download_button.clicked.connect(self._download_checked)
@@ -104,7 +116,7 @@ class UpdaterDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(self._summary)
         layout.addWidget(self._progress)
-        layout.addWidget(self._table, 1)
+        layout.addWidget(splitter, 1)
         layout.addLayout(buttons)
 
         session.subscribe(self._on_entry_changed)
@@ -270,6 +282,10 @@ class UpdaterDialog(QDialog):
             entry = self._entries[self._row_keys[item.row()]]
             # Re-renders every row of the mod through _on_entry_changed.
             self._session.set_locked(entry.mod_id, item.checkState() == Qt.CheckState.Checked)
+
+    def _on_current_row_changed(self, row: int, *_previous) -> None:
+        key = self._row_keys[row] if 0 <= row < len(self._row_keys) else None
+        self._notes.show_entry(self._entries.get(key) if key is not None else None)
 
     def _update_buttons(self) -> None:
         # The progress bar is shared, so downloads wait for the scan to finish.

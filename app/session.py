@@ -4,7 +4,7 @@ from collections import deque
 from dataclasses import dataclass, replace
 from enum import Enum
 from itertools import count
-from typing import Callable, Deque, Dict, List, Optional
+from typing import Callable, Deque, Dict, List, Optional, Tuple
 
 from ..domain.files import ModFile
 from ..domain.selection import Verdict
@@ -60,6 +60,8 @@ class UpdateEntry:
     phase: Phase = Phase.IDLE
     archive_path: str = ""
     locked: bool = False
+    # Files that may supersede the installed one, newest first.
+    newer_files: Tuple[ModFile, ...] = ()
 
     @property
     def can_download(self) -> bool:
@@ -144,6 +146,7 @@ class UpdateSession:
                 target=target,
                 status=_VERDICT_STATUS[selection.verdict],
                 reason=selection.reason,
+                newer_files=selection.newer_files,
                 **common,
             )
             matcher = scan.target_matchers.get(target.file_id) if target else None

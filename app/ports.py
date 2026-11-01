@@ -70,6 +70,14 @@ class ModFileSource(Protocol):
         """All files of a mod. Raises ``SourceError`` subclasses on failure."""
         ...
 
+    def mod_page_url(self, game: GameRef, mod_id: int) -> str:
+        """Web page of a mod, for the user to read. Makes no request."""
+        ...
+
+    def mod_description(self, game: GameRef, mod_id: int) -> str:
+        """The mod page's description, as markup. Raises ``SourceError`` subclasses."""
+        ...
+
 
 # --- Host actions ---
 

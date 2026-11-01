@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import Iterable, List, Optional, Sequence
+from typing import Iterable, List, Optional, Sequence, Tuple
 
 from .files import FileCategory, ModFile
 
@@ -23,6 +23,9 @@ class Selection:
     installed: Optional[ModFile]
     target: Optional[ModFile]
     reason: str
+    # Files that may supersede the installed one, newest first, including the
+    # target. Their notes tell the user what updating would skip over.
+    newer_files: Tuple[ModFile, ...] = ()
 
 
 def select_successor(installed_file_id: Optional[int], files: Iterable[ModFile]) -> Selection:
@@ -54,14 +57,24 @@ def select_successor(installed_file_id: Optional[int], files: Iterable[ModFile])
     uncertain = not installed.is_fully_known or any(not f.is_fully_known for f in newer)
     candidates = [f for f in newer if f.is_active and f.uploaded_at is not None]
     newest = max(candidates, key=lambda f: (f.uploaded_at, f.file_id), default=None)
+    newer_files = tuple(
+        sorted(newer, key=lambda f: (f.uploaded_at or 0, f.file_id), reverse=True)
+    )
 
     if newest is not None:
         reason = f"Newest active file in file group {installed.group_id}."
         if uncertain:
             return Selection(
-                installed_file_id, Verdict.REVIEW, installed, newest, reason + _INCOMPLETE_NOTE
+                installed_file_id,
+                Verdict.REVIEW,
+                installed,
+                newest,
+                reason + _INCOMPLETE_NOTE,
+                newer_files,
             )
-        return Selection(installed_file_id, Verdict.READY, installed, newest, reason)
+        return Selection(
+            installed_file_id, Verdict.READY, installed, newest, reason, newer_files
+        )
 
     if uncertain:
         return Selection(
@@ -71,6 +84,7 @@ def select_successor(installed_file_id: Optional[int], files: Iterable[ModFile])
             None,
             f"Cannot tell whether file group {installed.group_id} has a newer file."
             + _INCOMPLETE_NOTE,
+            newer_files,
         )
     if installed.is_active:
         return Selection(
@@ -131,5 +145,6 @@ def _fallback(
                 installed,
                 candidate,
                 f"{why} Suggesting the mod's primary main file.",
+                (candidate,),
             )
     return Selection(installed_file_id, Verdict.UNRESOLVED, installed, None, why)

@@ -6,7 +6,7 @@ the plugin can live without degrade to "unknown" instead of failing.
 """
 
 import threading
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from ..app.ports import (
     FileListing,
@@ -22,10 +22,20 @@ from .graphql import GraphQLClient, GraphQLError, RequestError, SchemaError, Tra
 _MOD_FILES_QUERY = """
 query ModFiles($modId: ID!, $gameId: ID!) {
   modFiles(modId: $modId, gameId: $gameId) {
-    fileId name version category primary groupId date uri sqid
+    fileId name version category primary groupId date uri sqid%s
   }
 }
 """
+# Only shown to the user: if v2 drops these, the scan goes on without them.
+_NOTE_FIELDS = " description changelogText"
+
+_MOD_DESCRIPTION_QUERY = """
+query ModDescription($modId: ID!, $gameId: ID!) {
+  mod(modId: $modId, gameId: $gameId) { description }
+}
+"""
+
+_MOD_PAGE_URL = "https://www.nexusmods.com/{domain}/mods/{mod_id}"
 
 _GAME_QUERY = """
 query Game($domainName: String) {
@@ -49,10 +59,19 @@ class NexusV2FileSource:
         self._client = client
         self._game_ids: Dict[str, int] = {}
         self._lock = threading.Lock()
+        self._with_notes = True
 
     def list_files(self, game: GameRef, mod_id: int) -> FileListing:
         game_id = self._game_id(game)
-        data = self._query(_MOD_FILES_QUERY, {"modId": str(mod_id), "gameId": str(game_id)})
+        variables = {"modId": str(mod_id), "gameId": str(game_id)}
+        try:
+            data = self._query(_MOD_FILES_QUERY % self._note_fields(), variables)
+        except SourceIncompatible:
+            if not self._note_fields():
+                raise
+            # Possibly only the note fields are gone; retry without them for good.
+            self._with_notes = False
+            data = self._query(_MOD_FILES_QUERY % "", variables)
         items = data.get("modFiles")
         if not isinstance(items, list):
             raise SourceIncompatible("Nexus v2 'modFiles' did not return a list.")
@@ -66,6 +85,21 @@ class NexusV2FileSource:
             if fingerprint.legacy_file_name or fingerprint.sqid:
                 matchers[mod_file.file_id] = fingerprint
         return FileListing(tuple(files), matchers)
+
+    def mod_page_url(self, game: GameRef, mod_id: int) -> str:
+        return _MOD_PAGE_URL.format(domain=game.nexus_domain, mod_id=mod_id)
+
+    def mod_description(self, game: GameRef, mod_id: int) -> str:
+        game_id = self._game_id(game)
+        data = self._query(
+            _MOD_DESCRIPTION_QUERY, {"modId": str(mod_id), "gameId": str(game_id)}
+        )
+        mod = data.get("mod")
+        return _text(mod, "description") if isinstance(mod, dict) else ""
+
+    def _note_fields(self) -> str:
+        with self._lock:
+            return _NOTE_FIELDS if self._with_notes else ""
 
     def _game_id(self, game: GameRef) -> int:
         if game.nexus_game_id > 0:
@@ -117,12 +151,20 @@ def _to_mod_file(item: Any) -> ModFile:
         is_primary=bool(item.get("primary")),
         group_id=_int(item.get("groupId")),
         uploaded_at=_int(item.get("date")) or None,
+        description=_text(item, "description"),
+        changelog=_lines(item.get("changelogText")),
     )
 
 
 def _text(item: Dict[str, Any], key: str) -> str:
     value = item.get(key)
     return str(value) if value is not None else ""
+
+
+def _lines(value: Any) -> Tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(str(line) for line in value if isinstance(line, str) and line.strip())
 
 
 def _int(value: Any) -> Optional[int]:

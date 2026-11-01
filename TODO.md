@@ -5,7 +5,7 @@ Open issues and ideas, roughly in priority order. See [`ARCH.md`](ARCH.md) for w
 ## Verification
 
 - [ ] **Run a download and install in MO2 end to end.** Check: the progress bar hides after the scan and after downloads, finished downloads are matched to their rows, and installing works.
-- [ ] **Add a permanent test suite** (e.g. `tests/`, runnable outside MO2 with stand-in `mobase`/Qt modules). Cover: the dependency rules between layers, the successor policy including incomplete data, error classification using the live API's response shapes, the scan's early-stop rules, the tracker's matching rules and retries, session lifecycle, and the lock cases below.
+- [ ] **Add a permanent test suite** (e.g. `tests/`, runnable outside MO2 with stand-in `mobase`/Qt modules). Cover: the dependency rules between layers, the successor policy including incomplete data, error classification using the live API's response shapes, the scan's early-stop rules, the tracker's matching rules and retries, session lifecycle, and the lock and notes cases below.
 - [ ] **Test the download queue (`max_concurrent_downloads`).** Cover `UpdateSession` with a fake `Downloader` and the real `DownloadTracker`: never more than the limit in flight, a limit of 1 runs strictly in order, both a success and a failure start the next queued entry, `close()` clears the queue, and a re-queued row can't be queued twice. Also check in MO2 that the dialog's progress bar counts `Queued` rows as unfinished.
 - [ ] **Test version locks.** Cover:
   - `UpdateSession` with a fake `ModLocks` and `Downloader` and the real `DownloadTracker`:
@@ -22,6 +22,11 @@ Open issues and ideas, roughly in priority order. See [`ARCH.md`](ARCH.md) for w
     - unlocking one mod keeps the others.
   - In MO2:
     - toggling one row's lock updates every row of that mod. Needs several rows for one Nexus mod, which the current test instance doesn't have: either one MO2 mod installed from several Nexus files, or two MO2 mods from the same Nexus mod (e.g. an optional file installed as its own mod).
+- [ ] **Test the notes pane.** Cover:
+  - `select_successor`'s `newer_files`: newest first, includes the target, empty when up to date, `(candidate,)` for the primary-file fallback.
+  - `nexus/catalog.py`: note fields parsed defensively; a schema error drops them for the session and retries once; `mod_description` on a missing mod raises `SourceError`.
+  - `markup_to_html`: script, `javascript:` and attribute-breaking URLs are neutralised; links, styles and line breaks survive.
+  - `NotesPane`: a failed mod-page load is retried when the row is selected again, a successful one is not, and only the latest selection is fetched while a load is in flight. Use a fake `ModNotes` that fails first and then succeeds.
 - [ ] **Confirm `IPluginGame.nexusGameID()`** returns the numeric v2 game ID (1704 for Skyrim SE). The adapter resolves the ID from the game's domain name when this returns 0, but a wrong non-zero value would not be detected.
 
 ## Download matching
@@ -33,7 +38,7 @@ Open issues and ideas, roughly in priority order. See [`ARCH.md`](ARCH.md) for w
 
 ## Nexus v2 API (beta)
 
-- [ ] **Survive a dropped optional field.** If v2 removes `sqid` or `uri`, the query fails validation and the scan stops as "incompatible". Inside `nexus/`, on `undefinedField` for an optional field, retry without it for the rest of the session, so only name-based download matching is lost.
+- [ ] **Survive a dropped `sqid` or `uri`.** If v2 removes either, the query fails validation and the scan stops as "incompatible". Retry without them for the rest of the session, as `nexus/catalog.py` already does for the note fields, so only name-based download matching is lost.
 - [ ] **v1 REST fallback source.** Add another `ModFileSource` adapter for `/v1/games/{domain}/mods/{id}/files.json`, used when v2 is unavailable or incompatible. v1 also has a `file_updates` chain (old file → new file), which could resolve cases v2's `groupId` can't. It requires a Nexus API key, which MO2's SDK doesn't expose, so the plugin would need a setting for one.
 - [ ] **Respect rate-limit headers.** An HTTP 429 currently counts as "unavailable" (the scan stops after 3 in a row). Read the rate-limit headers, or back off and retry, instead.
 

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
+from typing import Optional, Tuple
 
 
 class FileCategory(Enum):
@@ -37,6 +37,9 @@ class ModFile:
     # Successive uploads of the same logical file share a group, even across renames.
     group_id: Optional[int] = None
     uploaded_at: Optional[int] = None  # Unix timestamp
+    # Author's notes, as markup from the source. Often states game-version requirements.
+    description: str = ""
+    changelog: Tuple[str, ...] = ()
 
     @property
     def is_active(self) -> bool:
