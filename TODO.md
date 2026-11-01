@@ -4,7 +4,6 @@ Open issues and ideas, roughly in priority order. See [`ARCH.md`](ARCH.md) for w
 
 ## Verification
 
-- [ ] **Run a download and install in MO2 end to end.** The suite covers the plugin's side with fakes; check MO2's own behaviour: real downloads are reported and matched to their rows (timing of `.meta` writes included), and `installMod` with its Replace prompt and FOMOD wizards installs the archive.
 - [ ] **Confirm `IPluginGame.nexusGameID()`** returns the numeric v2 game ID (1704 for Skyrim SE). The adapter resolves the ID from the game's domain name when this returns 0, but a wrong non-zero value would not be detected.
 
 ## Download matching
