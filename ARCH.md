@@ -204,4 +204,23 @@ sequenceDiagram
 
 ## Testing approach
 
-Everything except `host/mo2.py`, `ui/` and `plugin.py` is plain Python and can be tested outside MO2: `domain` and `tracking` directly, `app` with fake ports, `nexus` with a fake transport or against the live API. So far this has been done with throwaway scripts; a permanent suite is listed in [`TODO.md`](TODO.md).
+`tests/` is a stdlib `unittest` suite that runs on Windows without MO2: one module per source module plus `test_architecture.py`, which enforces the dependency rules above.
+
+- `tests/__init__.py` registers the repo root as package `nexus_auto_updater` without running its `__init__.py`, installs a stand-in `mobase` (`tests/fake_mobase.py`; MO2's real one needs MO2's DLLs) and sets `QT_QPA_PLATFORM=offscreen`.
+- `ui/`, `plugin.py` and `__init__.py` are tested with real PyQt6, offscreen. Without PyQt6 those tests are skipped and the rest still run.
+- `app` uses fake ports (`tests/fakes.py`) with the real `DownloadTracker`; `nexus` patches `urlopen`; `host` uses a fake organizer and real temp files. No test touches the network, except `tests/test_nexus_live.py`, which runs only with `NEXUS_LIVE_TESTS=1`.
+
+Setup (PyQt6 6.7.1 matches MO2 2.5.2), from the repo root:
+
+```
+<Python 3.12>\python.exe -m venv .venv
+.venv\Scripts\python -m pip install -r tests\requirements.txt
+```
+
+Run, and measure coverage:
+
+```
+.venv\Scripts\python -m unittest discover -s tests -t .
+.venv\Scripts\python -m coverage run --branch --source=. --omit="tests/*,.venv/*" -m unittest discover -s tests -t .
+.venv\Scripts\python -m coverage report -m
+```

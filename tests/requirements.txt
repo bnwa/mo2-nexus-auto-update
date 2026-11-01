@@ -1,0 +1,3 @@
+# PyQt6 6.7.1 matches the version embedded in MO2 2.5.2 (Python 3.12).
+PyQt6==6.7.1
+coverage>=7
