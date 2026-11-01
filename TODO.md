@@ -4,9 +4,24 @@ Open issues and ideas, roughly in priority order. See [`ARCH.md`](ARCH.md) for w
 
 ## Verification
 
-- [ ] **Run the current code in MO2 end to end.** A full update (Actor Value Generator, 2.2.9.4 → 2.3.6.0) worked with the first prototype. Since then the code was split into layers, hardened for the beta API, and the header checkbox and progress-bar changes were added. None of that has been run inside MO2 yet: the logic was tested outside MO2, and the Qt dialog was only import-checked. Check: scan, select-all header, progress bar hiding after scan and after downloads, download matching, install.
-- [ ] **Add a permanent test suite** (e.g. `tests/`, runnable outside MO2 with stand-in `mobase`/Qt modules). Cover: the dependency rules between layers, the successor policy including incomplete data, error classification using the live API's response shapes, the scan's early-stop rules, the tracker's matching rules and retries, and session lifecycle. The checks so far were throwaway scripts.
-- [ ] **Test the download queue (`max_concurrent_downloads`).** The feature has had no test coverage and has not been run in MO2. Cover `UpdateSession` with a fake `Downloader` and the real `DownloadTracker`: never more than the limit in flight, a limit of 1 runs strictly in order, both a success and a failure start the next queued entry, `close()` clears the queue, and a re-queued row can't be queued twice. Also check in MO2 that the dialog's progress bar counts `Queued` rows as unfinished.
+- [ ] **Run a download and install in MO2 end to end.** Check: the progress bar hides after the scan and after downloads, finished downloads are matched to their rows, and installing works.
+- [ ] **Add a permanent test suite** (e.g. `tests/`, runnable outside MO2 with stand-in `mobase`/Qt modules). Cover: the dependency rules between layers, the successor policy including incomplete data, error classification using the live API's response shapes, the scan's early-stop rules, the tracker's matching rules and retries, session lifecycle, and the lock cases below.
+- [ ] **Test the download queue (`max_concurrent_downloads`).** Cover `UpdateSession` with a fake `Downloader` and the real `DownloadTracker`: never more than the limit in flight, a limit of 1 runs strictly in order, both a success and a failure start the next queued entry, `close()` clears the queue, and a re-queued row can't be queued twice. Also check in MO2 that the dialog's progress bar counts `Queued` rows as unfinished.
+- [ ] **Test version locks.** Cover:
+  - `UpdateSession` with a fake `ModLocks` and `Downloader` and the real `DownloadTracker`:
+    - a mod locked before the scan loads locked, and `download()` refuses it;
+    - a lock covers every entry of the mod (several installed files) and no other mod;
+    - locking a `QUEUED` entry dequeues it and sets it back to `IDLE`;
+    - locking a `DOWNLOADING` entry leaves it in flight but blocks `install()` once it is `DOWNLOADED`;
+    - unlocking makes it downloadable again without starting anything;
+    - a dequeued entry doesn't hold a download slot;
+    - setting the state a mod already has notifies no one.
+  - `Mo2Host` lock storage with a fake organizer:
+    - the stored value round-trips;
+    - malformed or empty stored values read as "nothing locked";
+    - unlocking one mod keeps the others.
+  - In MO2:
+    - toggling one row's lock updates every row of that mod. Needs several rows for one Nexus mod, which the current test instance doesn't have: either one MO2 mod installed from several Nexus files, or two MO2 mods from the same Nexus mod (e.g. an optional file installed as its own mod).
 - [ ] **Confirm `IPluginGame.nexusGameID()`** returns the numeric v2 game ID (1704 for Skyrim SE). The adapter resolves the ID from the game's domain name when this returns 0, but a wrong non-zero value would not be detected.
 
 ## Download matching

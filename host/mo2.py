@@ -1,7 +1,7 @@
 """Adapter implementing the application's host ports on top of mobase."""
 
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Optional, Set, Tuple
 
 import mobase
 
@@ -11,10 +11,13 @@ from .metadata import read_archive_ids, read_general_keys, read_installed_files
 # (archive_path, succeeded)
 DownloadFinished = Callable[[str, bool], None]
 
+_LOCKS_KEY = "locked_mod_ids"
+
 
 class Mo2Host:
-    def __init__(self, organizer: mobase.IOrganizer):
+    def __init__(self, organizer: mobase.IOrganizer, plugin_name: str):
         self._organizer = organizer
+        self._plugin_name = plugin_name
         self._download_listener: Optional[DownloadFinished] = None
         self._hooks_registered = False
 
@@ -60,6 +63,26 @@ class Mo2Host:
                 )
             )
         return mods
+
+    # --- Locks (app.ports.ModLocks) ---
+
+    def is_locked(self, mod_id: int) -> bool:
+        return mod_id in self._locked_ids()
+
+    def set_locked(self, mod_id: int, locked: bool) -> None:
+        ids = self._locked_ids()
+        if locked:
+            ids.add(mod_id)
+        else:
+            ids.discard(mod_id)
+        # Per-instance storage: survives reinstalling or renaming the mod.
+        self._organizer.setPersistent(
+            self._plugin_name, _LOCKS_KEY, ",".join(str(i) for i in sorted(ids)), True
+        )
+
+    def _locked_ids(self) -> Set[int]:
+        raw = self._organizer.persistent(self._plugin_name, _LOCKS_KEY, "")
+        return {int(part) for part in str(raw or "").split(",") if part.strip().isdigit()}
 
     # --- Downloads (app.ports.Downloader) ---
 

@@ -40,6 +40,14 @@ PHASE_COLORS = {
 }
 
 
+LOCK_HEADER = "\N{LOCK}"
+LOCK_TOOLTIP = (
+    "Lock this mod's version: updates are still checked for, but not downloaded "
+    "or installed until you unlock it."
+)
+LOCKED_COLOR = "#7f8c8d"
+
+
 def status_text(entry: UpdateEntry) -> str:
     return PHASE_TEXT.get(entry.phase) or STATUS_TEXT[entry.status]
 

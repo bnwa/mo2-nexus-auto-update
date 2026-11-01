@@ -35,7 +35,7 @@ class NexusAutoUpdater(mobase.IPluginTool):
 
     def init(self, organizer: mobase.IOrganizer) -> bool:
         self._organizer = organizer
-        self._host = Mo2Host(organizer)
+        self._host = Mo2Host(organizer, self.NAME)
         # Lives as long as the plugin: MO2's download hooks cannot be unregistered.
         self._tracker = DownloadTracker(
             read_archive_ids=read_archive_ids,
@@ -104,7 +104,7 @@ class NexusAutoUpdater(mobase.IPluginTool):
         source = NexusV2FileSource(GraphQLClient(min_interval_s=self._request_delay_ms() / 1000))
         plan = ScanPlan(source, self._host.managed_game(), self._host.nexus_mods(not scan_all))
         session = UpdateSession(
-            self._host, self._host, self._tracker, self._max_concurrent_downloads()
+            self._host, self._host, self._tracker, self._host, self._max_concurrent_downloads()
         )
 
         dialog = UpdaterDialog(

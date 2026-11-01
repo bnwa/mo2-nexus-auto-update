@@ -83,12 +83,12 @@ It is pure Python: reading metadata (`read_archive_ids`) and scheduling retries 
 ### `app/` — use cases and ports
 
 - `ports.py` defines what the application needs from the outside world:
-  - Host side: `GameRef`, `InstalledMod`, `Downloader`, `Installer`.
+  - Host side: `GameRef`, `InstalledMod`, `Downloader`, `Installer`, `ModLocks`.
   - File source: `ModFileSource.list_files(game, mod_id) -> FileListing`, `ArchiveMatcher`, and the error types `SourceError` (this mod failed), `SourceUnavailable` (transient), `SourceIncompatible` (the source's contract changed).
 - `scan.py`: `ScanPlan` is a blocking, interruptible generator of events (`ScanProgress`, `ModScanned`, `ScanFailed`) suitable for running off the UI thread. It skips mods the host can't download for, applies the domain policy to each listing, and stops early:
   - at the first `SourceIncompatible` (every remaining request would fail the same way);
   - after 3 consecutive `SourceUnavailable` (the source is presumed down).
-- `session.py`: `UpdateSession` owns the session's read model — one `UpdateEntry` per installed file, with `EntryStatus` (what the scan concluded) and `Phase` (download/install progress). It owns the mapping from tracker tickets to entries, starts downloads and installs through the ports, and notifies one subscriber when an entry changes. Downloads are queued (`Phase.QUEUED`) and started only while fewer than `max_concurrent_downloads` are in flight; each resolved download starts the next queued one. `close()` withdraws its expectations from the tracker, which outlives sessions.
+- `session.py`: `UpdateSession` owns the session's read model — one `UpdateEntry` per installed file, with `EntryStatus` (what the scan concluded) and `Phase` (download/install progress). It owns the mapping from tracker tickets to entries, starts downloads and installs through the ports, and notifies one subscriber when an entry changes. Downloads are queued (`Phase.QUEUED`) and started only while fewer than `max_concurrent_downloads` are in flight; each resolved download starts the next queued one. `close()` withdraws its expectations from the tracker, which outlives sessions. Entries of a Nexus mod the user locked (`set_locked`, persisted through `ModLocks`) keep their scan verdict but can't be downloaded or installed; locking dequeues queued downloads.
 
 ### `nexus/` — Nexus v2 adapter
 
@@ -110,6 +110,7 @@ It is pure Python: reading metadata (`read_archive_ids`) and scheduling retries 
   - Inventory: Nexus mods in priority order, optionally only those MO2 flags as outdated. Installed file IDs come from `[installedFiles]`, falling back to the installation archive's `.meta`. Mods for a different Nexus game get a `download_blocker`.
   - Downloads: `startDownloadNexusFile`. Completions are reported by **archive path**, resolved immediately, because MO2 download IDs are list indices that can shift.
   - Installs: `installMod`, which shows MO2's own Replace prompt and any FOMOD wizard.
+  - Locks: locked Nexus mod IDs in the plugin's per-instance persistent storage, so they survive reinstalls and renames.
 
 ### `ui/` — presentation
 

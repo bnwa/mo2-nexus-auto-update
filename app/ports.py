@@ -80,3 +80,11 @@ class Downloader(Protocol):
 
 class Installer(Protocol):
     def install_archive(self, archive_path: str, mod_name: str) -> bool: ...
+
+
+class ModLocks(Protocol):
+    """Persistent user locks: a locked mod is still checked but never updated."""
+
+    def is_locked(self, mod_id: int) -> bool: ...
+
+    def set_locked(self, mod_id: int, locked: bool) -> None: ...

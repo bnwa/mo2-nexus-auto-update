@@ -9,7 +9,7 @@ from typing import Callable, Deque, Dict, List, Optional
 from ..domain.files import ModFile
 from ..domain.selection import Verdict
 from ..tracking.tracker import DownloadTracker, Ticket
-from .ports import ArchiveMatcher, Downloader, Installer
+from .ports import ArchiveMatcher, Downloader, Installer, ModLocks
 from .scan import ModScan
 
 EntryKey = int
@@ -59,18 +59,20 @@ class UpdateEntry:
     reason: str
     phase: Phase = Phase.IDLE
     archive_path: str = ""
+    locked: bool = False
 
     @property
     def can_download(self) -> bool:
         return (
-            self.target is not None
+            not self.locked
+            and self.target is not None
             and self.status in _OFFERED
             and self.phase in (Phase.IDLE, Phase.DOWNLOAD_FAILED)
         )
 
     @property
     def can_install(self) -> bool:
-        return self.phase is Phase.DOWNLOADED and bool(self.archive_path)
+        return not self.locked and self.phase is Phase.DOWNLOADED and bool(self.archive_path)
 
 
 EntryListener = Callable[[UpdateEntry], None]
@@ -82,11 +84,13 @@ class UpdateSession:
         downloader: Downloader,
         installer: Installer,
         tracker: DownloadTracker,
+        locks: ModLocks,
         max_concurrent_downloads: int,
     ):
         self._downloader = downloader
         self._installer = installer
         self._tracker = tracker
+        self._locks = locks
         self._max_downloads = max_concurrent_downloads
         self._queue: Deque[EntryKey] = deque()
         self._entries: Dict[EntryKey, UpdateEntry] = {}
@@ -111,6 +115,7 @@ class UpdateSession:
             mod_id=mod.mod_id,
             version=mod.version,
             newest_version=mod.newest_version,
+            locked=self._locks.is_locked(mod.mod_id),
         )
         if scan.skipped_reason or scan.error:
             status = EntryStatus.SKIPPED if scan.skipped_reason else EntryStatus.ERROR
@@ -153,6 +158,22 @@ class UpdateSession:
         self._queue.append(key)
         self._update(key, phase=Phase.QUEUED, archive_path="")
         self._start_queued()
+
+    def set_locked(self, mod_id: int, locked: bool) -> None:
+        """Lock or unlock every entry of a Nexus mod, and remember it.
+
+        Locking dequeues queued downloads. A download already in flight can't be
+        cancelled, but its archive can't be installed while the mod is locked.
+        """
+        self._locks.set_locked(mod_id, locked)
+        for key, entry in list(self._entries.items()):
+            if entry.mod_id != mod_id or entry.locked == locked:
+                continue
+            changes = dict(locked=locked)
+            if locked and entry.phase is Phase.QUEUED:
+                self._queue.remove(key)
+                changes["phase"] = Phase.IDLE
+            self._update(key, **changes)
 
     def install(self, key: EntryKey) -> None:
         entry = self._entries[key]

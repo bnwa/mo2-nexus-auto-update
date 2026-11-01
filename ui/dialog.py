@@ -20,11 +20,11 @@ from PyQt6.QtWidgets import (
 from ..app.scan import ModScanned, ScanFailed, ScanPlan, ScanProgress
 from ..app.session import EntryKey, EntryStatus, Phase, UpdateEntry, UpdateSession
 from . import text
-from .header import CheckableHeader
+from .header import CenteredCheckDelegate, CheckableHeader
 from .scan_worker import ScanWorker
 
-COL_CHECK, COL_MOD, COL_INSTALLED, COL_TARGET, COL_STATUS, COL_DETAILS = range(6)
-HEADERS = ["", "Mod", "Installed file", "Update to", "Status", "Details"]
+COL_CHECK, COL_LOCK, COL_MOD, COL_INSTALLED, COL_TARGET, COL_STATUS, COL_DETAILS = range(7)
+HEADERS = ["", text.LOCK_HEADER, "Mod", "Installed file", "Update to", "Status", "Details"]
 
 
 class UpdaterDialog(QDialog):
@@ -71,12 +71,16 @@ class UpdaterDialog(QDialog):
         self._table.setHorizontalHeader(header)
         self._table.setHorizontalHeaderLabels(HEADERS)
         self._table.horizontalHeaderItem(COL_CHECK).setToolTip("Select / deselect all updates")
+        self._table.horizontalHeaderItem(COL_LOCK).setToolTip(text.LOCK_TOOLTIP)
         self._table.verticalHeader().setVisible(False)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.itemChanged.connect(self._on_item_changed)
-        header.setSectionResizeMode(COL_CHECK, QHeaderView.ResizeMode.Fixed)
-        self._table.setColumnWidth(COL_CHECK, 32)
+        self._check_delegate = CenteredCheckDelegate(self._table)
+        for column in (COL_CHECK, COL_LOCK):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
+            self._table.setColumnWidth(column, 32)
+            self._table.setItemDelegateForColumn(column, self._check_delegate)
         for column in (COL_MOD, COL_INSTALLED, COL_TARGET):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
             self._table.setColumnWidth(column, 250)
@@ -191,6 +195,14 @@ class UpdaterDialog(QDialog):
         elif not entry.can_download:
             check.setCheckState(Qt.CheckState.Unchecked)
 
+        lock = self._table.item(index, COL_LOCK)
+        if lock is None:
+            lock = QTableWidgetItem()
+            lock.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
+            lock.setToolTip(text.LOCK_TOOLTIP)
+            self._table.setItem(index, COL_LOCK, lock)
+        lock.setCheckState(Qt.CheckState.Checked if entry.locked else Qt.CheckState.Unchecked)
+
         mod_item = QTableWidgetItem(entry.mod_name)
         mod_item.setToolTip(text.mod_tooltip(entry))
         self._table.setItem(index, COL_MOD, mod_item)
@@ -204,7 +216,6 @@ class UpdaterDialog(QDialog):
         self._table.setItem(index, COL_TARGET, target_item)
 
         status_item = QTableWidgetItem(text.status_text(entry))
-        status_item.setForeground(QBrush(QColor(text.status_color(entry))))
         self._table.setItem(index, COL_STATUS, status_item)
 
         details = entry.reason
@@ -213,6 +224,13 @@ class UpdaterDialog(QDialog):
         details_item = QTableWidgetItem(entry.reason)
         details_item.setToolTip(details)
         self._table.setItem(index, COL_DETAILS, details_item)
+
+        if entry.locked:
+            grey = QBrush(QColor(text.LOCKED_COLOR))
+            for column in (COL_MOD, COL_INSTALLED, COL_TARGET, COL_STATUS, COL_DETAILS):
+                self._table.item(index, column).setForeground(grey)
+        else:
+            status_item.setForeground(QBrush(QColor(text.status_color(entry))))
 
     def _apply_row_visibility(self) -> None:
         for index, key in enumerate(self._row_keys):
@@ -244,8 +262,14 @@ class UpdaterDialog(QDialog):
         self._sync_header()
 
     def _on_item_changed(self, item: QTableWidgetItem) -> None:
-        if item.column() == COL_CHECK and not self._bulk_check:
+        if self._bulk_check:
+            return
+        if item.column() == COL_CHECK:
             self._sync_header()
+        elif item.column() == COL_LOCK:
+            entry = self._entries[self._row_keys[item.row()]]
+            # Re-renders every row of the mod through _on_entry_changed.
+            self._session.set_locked(entry.mod_id, item.checkState() == Qt.CheckState.Checked)
 
     def _update_buttons(self) -> None:
         # The progress bar is shared, so downloads wait for the scan to finish.
