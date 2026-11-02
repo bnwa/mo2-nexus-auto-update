@@ -12,7 +12,8 @@ USER_AGENT = "MO2-NexusAutoUpdater/0.1"
 
 # Error codes in a GraphQL error's ``extensions.code`` meaning the query itself no
 # longer fits the schema (observed: ``undefinedField``). graphql-ruby also uses the
-# others for schema/query mismatches.
+# others for schema/query mismatches. ``QUERY_TOO_COMPLEX`` means the server's cost
+# budget is below what the query needs; retrying the same query can't help.
 _SCHEMA_ERROR_CODES = frozenset(
     {
         "undefinedField",
@@ -24,6 +25,7 @@ _SCHEMA_ERROR_CODES = frozenset(
         "selectionMismatch",
         "GRAPHQL_VALIDATION_FAILED",
         "GRAPHQL_PARSE_FAILED",
+        "QUERY_TOO_COMPLEX",
     }
 )
 

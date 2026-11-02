@@ -114,6 +114,7 @@ class InventoryTest(Mo2TestCase):
         ]
         result = self.host(*mods, game=game).nexus_mods(False)
         self.assertEqual(["", ""], [m.download_blocker for m in result[:2]])
+        self.assertEqual([True, True, False], [m.in_managed_game for m in result])
         self.assertEqual(
             "Mod belongs to Nexus game 'Skyrim'; MO2's plugin API can only start downloads for "
             "the managed game.",

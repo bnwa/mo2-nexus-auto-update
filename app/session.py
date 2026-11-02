@@ -7,6 +7,7 @@ from itertools import count
 from typing import Callable, Deque, Dict, List, Optional, Tuple
 
 from ..domain.files import ModFile
+from ..domain.requirements import DependencyGraph
 from ..domain.selection import Verdict
 from ..tracking.tracker import DownloadTracker, Ticket
 from .ports import ArchiveMatcher, Downloader, Installer, ModLocks
@@ -100,6 +101,7 @@ class UpdateSession:
         self._awaiting: Dict[Ticket, EntryKey] = {}
         self._keys = count(1)
         self._listener: Optional[EntryListener] = None
+        self._graph: Optional[DependencyGraph] = None
         tracker.set_listener(self._on_download_resolved)
 
     def subscribe(self, listener: Optional[EntryListener]) -> None:
@@ -108,6 +110,14 @@ class UpdateSession:
 
     def entries(self) -> List[UpdateEntry]:
         return list(self._entries.values())
+
+    @property
+    def dependency_graph(self) -> Optional[DependencyGraph]:
+        """Requirements among installed mods; ``None`` until they have been loaded."""
+        return self._graph
+
+    def set_dependency_graph(self, graph: DependencyGraph) -> None:
+        self._graph = graph
 
     def record_scan(self, scan: ModScan) -> List[UpdateEntry]:
         """Turn a mod's scan outcome into new entries."""

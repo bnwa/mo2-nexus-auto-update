@@ -6,9 +6,10 @@ knows about remote files arrives through ``ModFileSource`` and its error types.
 """
 
 from dataclasses import dataclass, field
-from typing import Mapping, Optional, Protocol, Tuple
+from typing import Mapping, Optional, Protocol, Sequence, Tuple
 
 from ..domain.files import ModFile
+from ..domain.requirements import ModRequirements
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,8 @@ class InstalledMod:
     newest_version: str
     # Why the host cannot download updates for this mod; empty when it can.
     download_blocker: str = ""
+    # False for a mod from another Nexus game; its mod ID means something else.
+    in_managed_game: bool = True
 
 
 # --- Remote mod files ---
@@ -76,6 +79,20 @@ class ModFileSource(Protocol):
 
     def mod_description(self, game: GameRef, mod_id: int) -> str:
         """The mod page's description, as markup. Raises ``SourceError`` subclasses."""
+        ...
+
+
+class ModRequirementSource(Protocol):
+    """Declared requirements of mods. Optional data: it never gates updates."""
+
+    def mod_requirements(
+        self, game: GameRef, mod_ids: Sequence[int]
+    ) -> Mapping[int, Optional[ModRequirements]]:
+        """One entry per requested mod; ``None`` means unknown.
+
+        Failures part-way leave the rest unknown. Raises ``SourceError`` subclasses
+        only when nothing could be looked up.
+        """
         ...
 
 

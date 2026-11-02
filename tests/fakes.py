@@ -33,6 +33,7 @@ def installed_mod(
     version: str = "1.0",
     newest_version: str = "2.0",
     blocker: str = "",
+    in_managed_game: bool = True,
 ) -> InstalledMod:
     return InstalledMod(
         name=name or f"Mod {mod_id}",
@@ -41,6 +42,7 @@ def installed_mod(
         version=version,
         newest_version=newest_version,
         download_blocker=blocker,
+        in_managed_game=in_managed_game,
     )
 
 

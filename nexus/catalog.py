@@ -6,7 +6,7 @@ the plugin can live without degrade to "unknown" instead of failing.
 """
 
 import threading
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 from ..app.ports import (
     FileListing,
@@ -16,6 +16,7 @@ from ..app.ports import (
     SourceUnavailable,
 )
 from ..domain.files import FileCategory, ModFile
+from ..domain.requirements import ModRequirements
 from .archives import ArchiveFingerprint
 from .graphql import GraphQLClient, GraphQLError, RequestError, SchemaError, TransientError
 
@@ -34,6 +35,27 @@ query ModDescription($modId: ID!, $gameId: ID!) {
   mod(modId: $modId, gameId: $gameId) { description }
 }
 """
+
+# Mods per request: the API silently caps a page at 80 and rejects queries whose
+# estimated cost exceeds 10000 (about batch * (5 * requirements + 4) here). The
+# batch also sees hidden and removed mods, which a per-mod `mod(...)` lookup can't.
+_REQUIREMENTS_BATCH = 50
+_REQUIREMENTS_PER_MOD = 25
+_MOD_REQUIREMENTS_QUERY = """
+query ModRequirements($ids: [CompositeDomainWithIdInput!]!, $count: Int) {
+  legacyModsByDomain(ids: $ids, count: $count) {
+    nodes {
+      modId
+      modRequirements {
+        nexusRequirements(offset: 0, count: %d) {
+          totalCount
+          nodes { gameId modId externalRequirement }
+        }
+      }
+    }
+  }
+}
+""" % _REQUIREMENTS_PER_MOD
 
 _MOD_PAGE_URL = "https://www.nexusmods.com/{domain}/mods/{mod_id}"
 
@@ -85,6 +107,29 @@ class NexusV2FileSource:
             if fingerprint.legacy_file_name or fingerprint.sqid:
                 matchers[mod_file.file_id] = fingerprint
         return FileListing(tuple(files), matchers)
+
+    def mod_requirements(
+        self, game: GameRef, mod_ids: Sequence[int]
+    ) -> Mapping[int, Optional[ModRequirements]]:
+        result: Dict[int, Optional[ModRequirements]] = {mod_id: None for mod_id in mod_ids}
+        wanted = sorted(mod_id for mod_id in result if mod_id > 0)
+        if not wanted:
+            return result
+        game_id = self._game_id(game)
+        for start in range(0, len(wanted), _REQUIREMENTS_BATCH):
+            chunk = wanted[start : start + _REQUIREMENTS_BATCH]
+            variables = {
+                "ids": [{"gameDomain": game.nexus_domain, "modId": mod_id} for mod_id in chunk],
+                "count": len(chunk),
+            }
+            try:
+                data = self._query(_MOD_REQUIREMENTS_QUERY, variables)
+                result.update(_to_requirements(data, chunk, game_id))
+            except SourceError:
+                if start == 0:
+                    raise
+                break  # Keep what was read; the rest stays unknown.
+        return result
 
     def mod_page_url(self, game: GameRef, mod_id: int) -> str:
         return _MOD_PAGE_URL.format(domain=game.nexus_domain, mod_id=mod_id)
@@ -154,6 +199,48 @@ def _to_mod_file(item: Any) -> ModFile:
         description=_text(item, "description"),
         changelog=_lines(item.get("changelogText")),
     )
+
+
+def _to_requirements(
+    data: Dict[str, Any], requested: Sequence[int], game_id: int
+) -> Dict[int, Optional[ModRequirements]]:
+    page = data.get("legacyModsByDomain")
+    nodes = page.get("nodes") if isinstance(page, dict) else None
+    if not isinstance(nodes, list) or len(nodes) > len(requested):
+        raise SourceIncompatible("Nexus v2 'legacyModsByDomain' returned an unexpected page.")
+    wanted = set(requested)
+    parsed: Dict[int, Optional[ModRequirements]] = {}
+    for node in nodes:
+        # Order is not preserved and unknown mods are omitted, so match by ID.
+        mod_id = _int(node.get("modId")) if isinstance(node, dict) else None
+        if mod_id in wanted:
+            parsed[mod_id] = _declared_requirements(node, game_id)
+    return parsed
+
+
+def _declared_requirements(node: Dict[str, Any], game_id: int) -> Optional[ModRequirements]:
+    requirements = node.get("modRequirements")
+    page = requirements.get("nexusRequirements") if isinstance(requirements, dict) else None
+    entries = page.get("nodes") if isinstance(page, dict) else None
+    if not isinstance(entries, list):
+        return None
+    # `nodesCount` always equals `totalCount`, so it can't reveal a short page.
+    total = _int(page.get("totalCount"))
+    complete = total is not None and len(entries) >= total
+    mod_ids = set()
+    for entry in entries:
+        external = entry.get("externalRequirement") if isinstance(entry, dict) else None
+        if not isinstance(external, bool):
+            complete = False
+            continue
+        required_id = _int(entry.get("modId"))
+        if external or not required_id:
+            continue  # Off-site: not a mod, so not a graph node.
+        if _int(entry.get("gameId")) != game_id:
+            complete = False  # Another game's mod ID space.
+            continue
+        mod_ids.add(required_id)
+    return ModRequirements(frozenset(mod_ids), complete)
 
 
 def _text(item: Dict[str, Any], key: str) -> str:

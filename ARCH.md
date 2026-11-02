@@ -71,6 +71,8 @@ Each `Selection` also carries `newer_files`: every file that may supersede the i
 
 `plan_updates()` applies this per installed file (a mod can be installed from several files) and never proposes the same target twice.
 
+- `requirements.py`: `ModRequirements` (the Nexus mods a mod page declares as requirements, plus whether that list is `complete`) and `DependencyGraph`, the requirement edges among installed mods keyed by Nexus mod ID. Reverse edges (`dependents`) and requirements that aren't installed (`not_installed`) are derived locally from the forward edges. Requirements exist per mod page, with no versions or files, and authors use them for soft links too, so the graph is advisory. It never lets "unknown" read as "none": `dependencies_known` / `dependents_known` say whether an answer is exact, and one unknown mod makes every `dependents` answer inexact.
+
 ### `tracking/` — correlating downloads
 
 `DownloadTracker` knows expected downloads only as `(mod_id, file_id, name_matches)` behind an opaque `Ticket`. When the host reports a finished archive path it tries, in order:
@@ -87,11 +89,13 @@ It is pure Python: reading metadata (`read_archive_ids`) and scheduling retries 
 - `ports.py` defines what the application needs from the outside world:
   - Host side: `GameRef`, `InstalledMod`, `Downloader`, `Installer`, `ModLocks`.
   - File source: `ModFileSource.list_files(game, mod_id) -> FileListing`, `mod_page_url`, `mod_description`, `ArchiveMatcher`, and the error types `SourceError` (this mod failed), `SourceUnavailable` (transient), `SourceIncompatible` (the source's contract changed).
+  - Requirements: `ModRequirementSource.mod_requirements(game, mod_ids) -> {mod_id: ModRequirements | None}`; `None` means unknown. A separate Protocol from `ModFileSource`, because requirements are optional data that must never stop or degrade the update scan.
+- `requirements.py`: `load_dependency_graph(source, game, mods)` is a blocking call (run it off the UI thread) that builds the graph from the managed game's mods only (`InstalledMod.in_managed_game`, since Nexus mod IDs of other games would collide). A failing source yields an all-unknown graph, not an error.
 - `scan.py`: `ScanPlan` is a blocking, interruptible generator of events (`ScanProgress`, `ModScanned`, `ScanFailed`) suitable for running off the UI thread. It skips mods the host can't download for, applies the domain policy to each listing, and stops early:
   - at the first `SourceIncompatible` (every remaining request would fail the same way);
   - after 3 consecutive `SourceUnavailable` (the source is presumed down).
 - `notes.py`: `ModNotes` reads a mod's page URL and description (blocking, cached) for the notes pane.
-- `session.py`: `UpdateSession` owns the session's read model — one `UpdateEntry` per installed file, with `EntryStatus` (what the scan concluded) and `Phase` (download/install progress). It owns the mapping from tracker tickets to entries, starts downloads and installs through the ports, and notifies one subscriber when an entry changes. Downloads are queued (`Phase.QUEUED`) and started only while fewer than `max_concurrent_downloads` are in flight; each resolved download starts the next queued one. `close()` withdraws its expectations from the tracker, which outlives sessions. Entries of a Nexus mod the user locked (`set_locked`, persisted through `ModLocks`) keep their scan verdict but can't be downloaded or installed; locking dequeues queued downloads.
+- `session.py`: `UpdateSession` owns the session's read model — one `UpdateEntry` per installed file, with `EntryStatus` (what the scan concluded) and `Phase` (download/install progress). It owns the mapping from tracker tickets to entries, starts downloads and installs through the ports, and notifies one subscriber when an entry changes. Downloads are queued (`Phase.QUEUED`) and started only while fewer than `max_concurrent_downloads` are in flight; each resolved download starts the next queued one. `close()` withdraws its expectations from the tracker, which outlives sessions. It also holds the session's `dependency_graph` (`None` until loaded). Entries of a Nexus mod the user locked (`set_locked`, persisted through `ModLocks`) keep their scan verdict but can't be downloaded or installed; locking dequeues queued downloads.
 
 ### `nexus/` — Nexus v2 adapter
 
@@ -102,6 +106,7 @@ It is pure Python: reading metadata (`read_archive_ids`) and scheduling retries 
 
   v2 returns HTTP 200 for GraphQL errors, so classification uses `errors[].extensions.code`.
 - `catalog.py`: `NexusV2FileSource` implements `ModFileSource`. It resolves and caches numeric game IDs, maps v2 fields and enum spellings onto `ModFile`, and maps transport errors onto port errors (`TransientError` → `SourceUnavailable`, `SchemaError` → `SourceIncompatible`, `RequestError` → `SourceError`, `GAME_NOT_FOUND` → `SourceIncompatible`). Parsing is defensive: optional fields degrade to unknown; if the schema rejects the file notes (`description`, `changelogText`), the session continues without them; a missing `fileId` or a non-list `modFiles` is treated as a contract change.
+  - Requirements (`mod_requirements`): batched through `legacyModsByDomain` (50 mods per request, 25 requirements each, within the API's cost limit of 10000), because that query also sees hidden and removed mods that `mod(...)` reports as `NOT_FOUND`. Nodes are matched by mod ID (order isn't preserved). Off-site requirements (`externalRequirement`, or mod ID 0) are skipped; other-game, unreadable or truncated entries make the result `complete=False` (`nodesCount` always equals `totalCount`, so truncation is detected by comparing `len(nodes)` to `totalCount`). A failure after the first batch keeps what was read and leaves the rest unknown; `QUERY_TOO_COMPLEX` counts as a schema-level error.
 - `archives.py`: `ArchiveFingerprint` (satisfies `ArchiveMatcher`) encodes Nexus archive naming:
   - Legacy uploads: `<name>-<modid>-<version>-<timestamp>.<ext>`, equal to v2's `uri`.
   - Newer uploads: `<name> <modid> <version> <YYYY-MM-DDTHH-MMZ> <sqid>.<ext>`. Here v2's `uri` is an opaque storage path, so the trailing `sqid` is the identifier.
@@ -110,7 +115,7 @@ It is pure Python: reading metadata (`read_archive_ids`) and scheduling retries 
 
 - `metadata.py`: reads MO2's QSettings files without `mobase`: a mod's `meta.ini` (`[installedFiles]` `N\modid` / `N\fileid`, `[General]` keys) and a download's `<archive>.meta` (`modID`, `fileID`).
 - `mo2.py`: `Mo2Host` implements the host ports.
-  - Inventory: Nexus mods in priority order, optionally only those MO2 flags as outdated. Installed file IDs come from `[installedFiles]`, falling back to the installation archive's `.meta`. Mods for a different Nexus game get a `download_blocker`.
+  - Inventory: Nexus mods in priority order, optionally only those MO2 flags as outdated. Installed file IDs come from `[installedFiles]`, falling back to the installation archive's `.meta`. Mods for a different Nexus game get a `download_blocker` and `in_managed_game = False`.
   - Downloads: `startDownloadNexusFile`. Completions are reported by **archive path**, resolved immediately, because MO2 download IDs are list indices that can shift.
   - Installs: `installMod`, which shows MO2's own Replace prompt and any FOMOD wizard.
   - Locks: locked Nexus mod IDs in the plugin's per-instance persistent storage, so they survive reinstalls and renames.

@@ -47,7 +47,8 @@ class Mo2Host:
             meta_ini = Path(mod.absolutePath()) / "meta.ini"
             versions = read_general_keys(meta_ini, ("version", "newestVersion"))
             blocker = ""
-            if mod.gameName().lower() not in own_game_names:
+            in_managed_game = mod.gameName().lower() in own_game_names
+            if not in_managed_game:
                 blocker = (
                     f"Mod belongs to Nexus game '{mod.gameName()}'; MO2's plugin API can "
                     "only start downloads for the managed game."
@@ -60,6 +61,7 @@ class Mo2Host:
                     version=versions.get("version", ""),
                     newest_version=versions.get("newestVersion", ""),
                     download_blocker=blocker,
+                    in_managed_game=in_managed_game,
                 )
             )
         return mods
