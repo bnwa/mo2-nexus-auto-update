@@ -1,46 +1,81 @@
 You are working on a plugin for Mod Organizer 2 exclusively concerned with updating mods installed via Nexus Mods' intergration with Mod Organize 2.
 
 ## Development Environment
-
 - Run Python, tests and coverage with the venv interpreter, as in `CONTRIB.md`
   (`.venv\Scripts\python -m unittest discover -s tests -t .`). Do not use the
   system or a WSL `python3`.
 
-## Engineering Style
+## Software Engineering Style
+- Use guard clauses and early returns instead of nested else. A
+plain else is fine for two symmetric branches.
+- Parse unknown input once, at the boundary that owns it, into a
+typed value. Pass that value inward; don't re-check it.
+- Reify informal or implicit state machines as types with
+functions. Signs of one: boolean flags that combine, fields that
+are only valid in some phases, status strings or enums checked
+ad hoc across call sites. Give each state its own type (sealed
+interface, discriminated union, tagged variant) carrying only the
+data valid in that state, and make each transition a function
+from one state to the next. Illegal states should be
+unrepresentable and branching exhaustive by the compiler. A
+single independent flag stays a flag.
+- Write the main function as the happy path: guards first, then
+straight-line flow. Move bulky validation or supporting detail
+into small helpers placed next to their caller.
+- Don't extract a single-use helper unless it hides a genuinely
+complex boundary, is complex enough to test directly (see Tests),
+or has a name that makes the caller clearer. Otherwise inline it.
+- Before adding complexity for a speculative case, ask me, with
+one line each on the failure mode, likelihood, and cost. If you
+can't ask, skip it and list it in your summary. Standard hardening
+at trust boundaries (parameterized queries, path checks, no
+secrets in logs) isn't speculative; do it.
 
-- Change the least amount of files possible. A change that touches many files is
-  more likely to be a bad change than a good one unless the broader scope is
-  directly required.
-- Prefer practical fixes over broad architecture work. Add abstractions only
-  when they remove real repeated logic or establish a clear boundary of concern
-  that surfaces amongst the current modules.
-- Delete obsolete code aggressively when newer infrastructure makes it useless.
-  Do not leave dead branches, unreachable code, or functions that are never
-  called. If code is not necessary for the current behavior, remove it.
+### Tests
+- Test behavior through the public API of the boundary that owns
+it: the module, package, or service seam its callers depend on.
+A class or function that exists only to serve one caller is an
+implementation detail; cover it through that caller.
+- Assert on observable outcomes: return values, resulting state,
+effects at a real boundary (persisted rows, emitted events,
+responses). Don't assert which collaborators were called, in what
+order, or with what arguments.
+- Never write change-detector tests: tests that restate the code
+under test and would pass for a wrong implementation as readily
+as a correct one. Mocking each delegate and verifying its call is
+the common form. If a behavior-preserving refactor would break a
+test, the test is wrong; rewrite it against behavior or delete it.
+- Replace a dependency only where it crosses a process or
+ownership boundary (network, clock, filesystem, randomness,
+another team's service), and prefer a fake over a mock. Use real
+instances for everything in-process.
+- Don't test inputs the boundary already rules out. Inner code
+receives parsed, typed values; its tests use those types and skip
+cases the parser rejects.
+- Test an implementation detail directly only when failures
+through the public API wouldn't localize the defect: an
+algorithm, a parser, a state machine's transition functions. Keep
+its visibility as narrow as the language allows (package-private,
+module-internal, unexported).
+- If existing tests near your change are change detectors, don't
+extend the pattern and don't rewrite them unasked; flag them in
+your summary.
 
-## Architecture Boundaries
-
-- Keep each architectural layer focused on the concepts it owns. Do not leak 
-  concerns into unrelated layers just because it is convenient to pass data
-  through them.
-- Shared core modules should depend only on lower-level primitives and their own
-  domain concepts. Higher-level product concepts belong at the caller, component,
-  or layer that already owns them.
-- Pass the narrowest data needed across a boundary. Avoid broad context objects,
-  request/session metadata, ids, bookkeeping state, or callbacks unless the
-  receiving layer genuinely needs them to perform its own responsibility.
-- Keep identity mapping, persistence bookkeeping,  response shaping, and UI state
-  in the layers that own those jobs. Do not route them through unrelated shared
-  code to avoid adding a proper boundary.
-- Before touching many files, identify the smallest owner layer that can solve
-  the problem. Spreadiing one feature across unrelated modules/layers/components
-  needs a clear architectural reason, not just convenience.
-- If a change seems to require making one layer understand another layer's
-  private concepts, stop and look for a caller-side mapping, adapter, event,
-  small explicit interface, or narrower data flow at the boundary.
+### Comments
+- Comments don't narrate what code does. Comment only what code
+can't say: a non-obvious why (constraint, workaround, invariant)
+or the how of a genuinely intricate algorithm.
+- Never put session content in code: requests, instructions,
+review feedback, etc. Change history belongs in the commit
+message.
+- Never restate what the code or its names already say.
+- Leave existing comments alone unless your change invalidates
+one; then correct it.
+- Doc comments on public API (Javadoc, docstrings, TSDoc, etc)
+follow the repo's conventions and state the contract, not the
+implementation.
 
 ## Commit and Review Habits
-
 - If asked to write commit messages, follow the Conventional Commits standard:
   `<type>[optional scope][!]: <description>`, e.g. `feat: add per-mod version
   locks` or `fix(nexus): retry without dropped fields`. Use the types `feat`,
