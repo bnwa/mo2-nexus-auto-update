@@ -197,6 +197,15 @@ sequenceDiagram
     S-->>Y: entry changed (Installed / InstallCancelled)
 ```
 
+## What MO2 does not tell the plugin: download progress
+
+MO2 2.5.2's `IDownloadManager` offers `downloadPath`, `onDownloadComplete`, `onDownloadFailed`, `onDownloadPaused`, `onDownloadRemoved`, `startDownloadNexusFile` and `startDownloadURLs`. There is no progress, no size and no way to ask about a download in flight; the plugin learns only that an archive finished or failed. (The 2.5.3 beta stubs were not checked.) The plugin also fetches no file size from Nexus anywhere in `domain/` or `nexus/`, so it can't measure a download itself either. This shapes the design:
+
+- **The `Downloader` port is fire-and-forget.** `start_download` returns nothing; completion arrives later as a finished archive path, which `tracking/` matches back to the entry that asked for it.
+- **Progress is a stage, not a fraction.** `Progress` has `Queued`, `Downloading`, `Downloaded` and so on, and the UI draws a stage icon per row and a "N/M finished" line for the batch. Nothing in `app` or `ui` has a percentage to show.
+- **A stuck download can't be told from a slow one.** The only signal is time, so an entry unresolved after `DOWNLOAD_PATIENCE_MS` is released as `Unmatched` instead of being failed (see `app/session.py`).
+- **Any real progress has to come from outside MO2's API**, which would mean new ports and a new Nexus field. The constraints on that are in [`TODO.md`](TODO.md#download-progress).
+
 ## Designing for a beta API
 
 | Concern | Where it is handled |
