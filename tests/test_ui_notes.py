@@ -138,7 +138,7 @@ class NotesPaneTest(QtTestCase):
         self.addCleanup(self.pane.deleteLater)
 
     def wait_loaded(self, mod_id):
-        wait_until(lambda: mod_id in self.pane._pages and self.pane._loading is None)
+        wait_until(lambda: mod_id in self.notes.calls and "Loading the mod page" not in self.text())
 
     def text(self):
         return self.pane.toPlainText()
@@ -200,7 +200,6 @@ class NotesPaneTest(QtTestCase):
         self.wait_loaded(3)
         self.assertEqual([1, 3], self.notes.calls)
         self.assertIn("three", self.text())
-        self.assertNotIn(2, self.pane._pages)
 
     def test_result_for_a_deselected_mod_is_cached_and_does_not_disturb_the_view(self):
         first, second = Gate(), Gate()
@@ -283,11 +282,24 @@ class NotesPaneTest(QtTestCase):
         self.wait_loaded(1)
         self.assertNotIn("proposed update", self.text())
 
-    def test_result_after_the_bridge_is_gone_is_dropped(self):
-        self.pane._bridge = mock.Mock()
-        self.pane._bridge.loaded.emit.side_effect = RuntimeError("wrapped C/C++ object has been deleted")
+    def test_a_result_arriving_after_the_pane_is_gone_is_dropped(self):
+        from PyQt6 import sip
+
+        gate = Gate()
+        self.notes.gates[1] = gate
         self.notes.descriptions[1] = "x"
-        self.pane._fetch(1)  # Must not raise.
+        pane = NotesPane(self.notes)
+        before = set(threading.enumerate())
+        errors = []
+        with mock.patch.object(threading, "excepthook", errors.append):
+            pane.show_entry(entry(1))
+            self.assertTrue(gate.entered.wait(5))
+            fetchers = set(threading.enumerate()) - before
+            sip.delete(pane)
+            gate.release.set()
+            for fetcher in fetchers:
+                fetcher.join(5)
+        self.assertEqual([], errors)
         self.assertEqual([1], self.notes.calls)
 
     def test_escapes_the_mod_name(self):
