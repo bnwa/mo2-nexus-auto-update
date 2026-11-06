@@ -55,3 +55,8 @@ MO2 reports no progress for downloads (`IDownloadManager` in the 2.5.2 stubs has
 ## Code structure
 
 - [ ] **Reify `domain.Selection`.** `Selection.target` is optional, and `None` exactly when the verdict is `UP_TO_DATE` or `UNRESOLVED`, so a `READY` or `REVIEW` selection with no target is representable. `app/session.py` converts it once (`_finding`, with an `assert` that the target exists), which contains the problem but doesn't remove it. Replace `Selection` with a union per verdict (for example `Offered(target, needs_review, …)`, `UpToDate`, `Unresolved`) and let the session pass it through. This touches `domain/selection.py`, `app/session.py` and the many `test_domain_selection` cases, for consistency only; there is no known bug.
+
+
+## Test gaps
+
+- [ ] **Nothing tests that the download limit is re-read per download.** `plugin.py` passes `UpdateSession` the setting reader (`self._max_concurrent_downloads`) rather than a value, so a change to `max_concurrent_downloads` applies to the next download that starts. The session is tested with a provider whose value changes, but no test covers the plugin passing the reader. pyright catches an `int` passed by mistake, but a lambda that captured the value once would type-check and silently bring back the old read-once behaviour. A test would need to change the setting after `display()` and observe the limit through the public API (for example with a fake host that counts concurrent downloads), without reading the session's privates.
