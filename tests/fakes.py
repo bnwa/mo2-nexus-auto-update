@@ -119,7 +119,7 @@ class FakeLocks:
 
 
 class ManualScheduler:
-    """Captures the tracker's retries so tests fire them explicitly."""
+    """Captures the tracker's retries and expiries so tests fire them explicitly."""
 
     def __init__(self):
         self.pending: List[Tuple[int, Callable[[], None]]] = []
@@ -132,6 +132,13 @@ class ManualScheduler:
     def fire_next(self) -> None:
         _, callback = self.pending.pop(0)
         callback()
+
+    def fire(self, delay_ms: int) -> None:
+        """Fire, and forget, the pending callbacks scheduled with exactly this delay."""
+        due = [callback for delay, callback in self.pending if delay == delay_ms]
+        self.pending = [(delay, callback) for delay, callback in self.pending if delay != delay_ms]
+        for callback in due:
+            callback()
 
     def fire_all(self) -> None:
         while self.pending:

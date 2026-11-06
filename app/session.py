@@ -7,11 +7,16 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union, assert_nev
 from ..domain.files import ModFile
 from ..domain.requirements import DependencyGraph
 from ..domain.selection import Selection, Verdict
-from ..tracking.tracker import DownloadTracker, Ticket
+from ..tracking.tracker import DownloadTracker, Expiry, Ticket
 from .ports import ArchiveMatcher, Downloader, InstalledMod, Installer, ModLocks
 from .scan import ModChecked, ModErrored, ModScan, ModSkipped
 
 EntryKey = int
+
+# MO2 reports no download progress, so a download that has produced no matching archive
+# for this long is released from the batch and the concurrency limit. It is not given up
+# on: an archive that still arrives resolves the entry.
+DOWNLOAD_PATIENCE_MS = 30 * 60 * 1000
 
 
 @dataclass(frozen=True)
@@ -80,6 +85,11 @@ class DownloadFailed:
 
 
 @dataclass(frozen=True)
+class Unmatched:
+    """No matching archive appeared in time; one that arrives later still counts."""
+
+
+@dataclass(frozen=True)
 class Downloaded:
     archive: str
 
@@ -95,7 +105,14 @@ class InstallCancelled:
 
 
 Progress = Union[
-    Idle, Queued, Downloading, DownloadFailed, Downloaded, Installed, InstallCancelled
+    Idle,
+    Queued,
+    Downloading,
+    Unmatched,
+    DownloadFailed,
+    Downloaded,
+    Installed,
+    InstallCancelled,
 ]
 
 
@@ -127,7 +144,7 @@ def installed_of(finding: Finding) -> Optional[InstalledFile]:
 
 def downloadable(entry: UpdateEntry) -> Optional[Offered]:
     """The offer, if the entry can be downloaded now."""
-    if entry.locked or not isinstance(entry.progress, (Idle, DownloadFailed)):
+    if entry.locked or not isinstance(entry.progress, (Idle, DownloadFailed, Unmatched)):
         return None
     return entry.finding if isinstance(entry.finding, Offered) else None
 
@@ -161,6 +178,8 @@ class UpdateSession:
         self._entries: Dict[EntryKey, UpdateEntry] = {}
         self._matchers: Dict[EntryKey, ArchiveMatcher] = {}
         self._awaiting: Dict[Ticket, EntryKey] = {}
+        # Expired expectations: no slot held, but a late archive can still resolve them.
+        self._unmatched: Dict[Ticket, EntryKey] = {}
         self._keys = count(1)
         self._listener: Optional[EntryListener] = None
         self._graph: Optional[DependencyGraph] = None
@@ -207,6 +226,10 @@ class UpdateSession:
         offer = downloadable(self._entries[key])
         if offer is None:
             return
+        for ticket, owner in list(self._unmatched.items()):
+            if owner == key:
+                self._tracker.cancel(ticket)
+                del self._unmatched[ticket]
         self._queue[key] = offer.target
         self._update(key, progress=Queued())
         self._start_queued()
@@ -238,9 +261,10 @@ class UpdateSession:
 
     def close(self) -> None:
         """Stop tracking this session's downloads; the tracker outlives the session."""
-        for ticket in self._awaiting:
+        for ticket in (*self._awaiting, *self._unmatched):
             self._tracker.cancel(ticket)
         self._awaiting.clear()
+        self._unmatched.clear()
         self._queue.clear()
         self._tracker.set_listener(None)
         self._listener = None
@@ -257,6 +281,7 @@ class UpdateSession:
                 entry.mod_id,
                 target.file_id,
                 matcher.matches if matcher is not None else _never,
+                Expiry(DOWNLOAD_PATIENCE_MS, self._on_download_expired),
             )
             self._awaiting[ticket] = key
             self._update(key, progress=Downloading())
@@ -288,11 +313,19 @@ class UpdateSession:
     def _on_download_resolved(self, ticket: Ticket, archive_path: str, succeeded: bool) -> None:
         key = self._awaiting.pop(ticket, None)
         if key is None:
+            key = self._unmatched.pop(ticket, None)
+        if key is None:
             return
         if succeeded:
             self._update(key, progress=Downloaded(archive_path))
         else:
             self._update(key, progress=DownloadFailed())
+        self._start_queued()
+
+    def _on_download_expired(self, ticket: Ticket) -> None:
+        key = self._awaiting.pop(ticket)  # The tracker only expires tickets still awaited.
+        self._unmatched[ticket] = key
+        self._update(key, progress=Unmatched())
         self._start_queued()
 
 

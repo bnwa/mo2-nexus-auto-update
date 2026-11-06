@@ -3,6 +3,7 @@ import unittest
 
 from nexus_auto_updater.app.scan import ModChecked, ModScanned
 from nexus_auto_updater.app.session import (
+    DOWNLOAD_PATIENCE_MS,
     DownloadFailed,
     Downloaded,
     Downloading,
@@ -10,6 +11,7 @@ from nexus_auto_updater.app.session import (
     InstallCancelled,
     Installed,
     Queued,
+    Unmatched,
     UpdateSession,
 )
 from nexus_auto_updater.app.sync import Sync, RowChanged, RowsAdded
@@ -64,7 +66,8 @@ class StatusTestCase(QtTestCase):
     def setUp(self):
         super().setUp()
         self.ids = ArchiveIds()
-        self.tracker = DownloadTracker(self.ids, ManualScheduler())
+        self.scheduler = ManualScheduler()
+        self.tracker = DownloadTracker(self.ids, self.scheduler)
         self.installer = FakeInstaller()
         session = UpdateSession(FakeDownloader(), self.installer, self.tracker, FakeLocks(), lambda: self.max_downloads)
         self.runner = FakeScanRunner()
@@ -138,6 +141,12 @@ class IconTest(StatusTestCase):
         self.assertEqual(Installed, type(self.index(1).data(PROGRESS_ROLE)))
         self.assertTrue(self.has_icon(1))  # Installed
         self.assertFalse(self.has_icon(3))  # Never started
+
+    def test_an_unmatched_download_gets_an_icon(self):
+        self.sync.download_selected()
+        self.scheduler.fire(DOWNLOAD_PATIENCE_MS)
+        self.assertEqual(Unmatched, type(self.index(0).data(PROGRESS_ROLE)))
+        self.assertTrue(self.has_icon(0))
 
     def test_a_cancelled_install_has_no_icon(self):
         self.installer.result = False

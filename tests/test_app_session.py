@@ -13,10 +13,12 @@ from nexus_auto_updater.app.session import (
     Queued,
     ScanError,
     Skipped,
+    Unmatched,
     Unresolved,
     UpdateEntry,
     UpdateSession,
     UpToDate,
+    DOWNLOAD_PATIENCE_MS,
     _never,
     downloadable,
     installable,
@@ -146,7 +148,7 @@ class RecordScanTest(SessionTestCase):
         self.session.download(entry.key)
         self.tracker.download_finished(archive(101), True)
         self.assertIsInstance(self.entry(entry.key).progress, Downloading)
-        self.assertEqual([250], self.scheduler.delays)
+        self.assertEqual([250], [d for d in self.scheduler.delays if d != DOWNLOAD_PATIENCE_MS])
 
 
 class DownloadTest(SessionTestCase):
@@ -200,7 +202,7 @@ class DownloadTest(SessionTestCase):
         self.finish(a)
         self.finish(b)
         self.assertEqual([(1, 101), (2, 102)], self.downloader.calls)
-        self.assertEqual([], self.scheduler.pending)
+        self.assertEqual([], [d for d, _ in self.scheduler.pending if d != DOWNLOAD_PATIENCE_MS])
 
     def test_unknown_ticket_is_ignored(self):
         entry = self.ready(1, 1)
@@ -250,6 +252,86 @@ class QueueTest(SessionTestCase):
         self.assertEqual([], self.changes)
         self.assertEqual(2, len(self.downloader.calls))
         self.assertEqual([Downloading, Downloading, Queued], self.phases(*entries))
+
+
+class ExpiryTest(SessionTestCase):
+    max_downloads = 1
+
+    def expire(self):
+        self.scheduler.fire(DOWNLOAD_PATIENCE_MS)
+
+    def test_a_download_with_no_matching_archive_is_released(self):
+        a, b = (self.ready(i, i) for i in (1, 2))
+        self.session.download(a.key)
+        self.session.download(b.key)
+        self.assertEqual([Downloading, Queued], self.phases(a, b))
+        self.expire()
+        self.assertEqual([Unmatched, Downloading], self.phases(a, b))
+        self.assertEqual([(1, 101), (2, 102)], self.downloader.calls)
+        self.assertIsNone(installable(self.entry(a.key)))
+
+    def test_an_archive_that_arrives_late_still_resolves_the_entry(self):
+        a, b = (self.ready(i, i) for i in (1, 2))
+        for entry in (a, b):
+            self.session.download(entry.key)
+        self.expire()
+        self.finish(a)
+        self.assertIsInstance(self.entry(a.key).progress, Downloaded)
+        self.assertIsNotNone(installable(self.entry(a.key)))
+        self.assertIsInstance(self.entry(b.key).progress, Downloading)
+
+    def test_a_late_failure_is_reported(self):
+        entry = self.ready(1, 1)
+        self.session.download(entry.key)
+        self.expire()
+        self.finish(entry, succeeded=False)
+        self.assertIsInstance(self.entry(entry.key).progress, DownloadFailed)
+
+    def test_nothing_happens_when_it_resolved_in_time(self):
+        entry = self.ready(1, 1)
+        self.session.download(entry.key)
+        self.finish(entry)
+        changes = len(self.changes)
+        self.expire()
+        self.assertIsInstance(self.entry(entry.key).progress, Downloaded)
+        self.assertEqual(changes, len(self.changes))
+
+    def test_an_unmatched_entry_can_be_downloaded_again_without_two_resolutions(self):
+        entry = self.ready(1, 1)
+        self.session.download(entry.key)
+        self.expire()
+        self.assertIsNotNone(downloadable(self.entry(entry.key)))
+        self.session.download(entry.key)
+        self.assertEqual([(1, 101), (1, 101)], self.downloader.calls)
+        self.assertIsInstance(self.entry(entry.key).progress, Downloading)
+        self.finish(entry)
+        self.assertIsInstance(self.entry(entry.key).progress, Downloaded)
+        changes = len(self.changes)
+        self.finish(entry)  # A second archive for the abandoned expectation.
+        self.assertEqual(changes, len(self.changes))
+
+    def test_retrying_one_unmatched_entry_leaves_the_others_expectation(self):
+        a, b = (self.ready(i, i) for i in (1, 2))
+        for entry in (a, b):
+            self.session.download(entry.key)
+        self.expire()
+        self.expire()
+        self.assertEqual([Unmatched, Unmatched], self.phases(a, b))
+        self.session.download(a.key)
+        self.finish(b)
+        self.assertEqual([Downloading, Downloaded], self.phases(a, b))
+
+    def test_closing_silences_pending_and_expired_downloads(self):
+        a, b = (self.ready(i, i) for i in (1, 2))
+        for entry in (a, b):
+            self.session.download(entry.key)
+        self.expire()
+        self.session.close()
+        changes = len(self.changes)
+        self.finish(a)
+        self.expire()
+        self.assertEqual(changes, len(self.changes))
+        self.assertEqual([Unmatched, Downloading], self.phases(a, b))
 
 
 class StrictOrderTest(SessionTestCase):

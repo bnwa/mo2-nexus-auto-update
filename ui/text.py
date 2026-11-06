@@ -16,6 +16,7 @@ from ..app.session import (
     Queued,
     ScanError,
     Skipped,
+    Unmatched,
     UpdateEntry,
     Unresolved,
     UpToDate,
@@ -77,6 +78,8 @@ def _progress_look(progress: Progress) -> Optional[Tuple[str, str]]:
             return "Queued", "#45beef"
         case Downloading():
             return "Downloading", "#45beef"
+        case Unmatched():
+            return "Not matched", "#e67e22"
         case Downloaded():
             return "Downloaded", "#45beef"
         case DownloadFailed():
@@ -105,7 +108,7 @@ def archive_of(progress: Progress) -> Optional[str]:
             return archive
         case InstallCancelled(archive=archive):
             return archive
-        case Idle() | Queued() | Downloading() | DownloadFailed():
+        case Idle() | Queued() | Downloading() | Unmatched() | DownloadFailed():
             return None
         case _:
             assert_never(progress)

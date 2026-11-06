@@ -5,7 +5,7 @@ from unittest import mock
 from nexus_auto_updater.app.notes import ModNotes
 from nexus_auto_updater.app.ports import FileListing, SourceError, SourceIncompatible
 from nexus_auto_updater.app.scan import ScanPlan
-from nexus_auto_updater.app.session import Installed, Offered, UpdateSession
+from nexus_auto_updater.app.session import DOWNLOAD_PATIENCE_MS, Installed, Offered, UpdateSession
 from nexus_auto_updater.app.sync import Complete, Stopped, Sync
 from nexus_auto_updater.tracking.tracker import DownloadTracker
 from tests import HAS_QT, QtTestCase, wait_until
@@ -87,7 +87,8 @@ class DialogTestCase(QtTestCase):
         if gate_mod is not None:
             self.source.before_list = lambda mod_id: self.gate.wait() if mod_id == gate_mod else None
         self.archive_ids = ArchiveIds()
-        self.tracker = DownloadTracker(self.archive_ids, ManualScheduler())
+        self.scheduler = ManualScheduler()
+        self.tracker = DownloadTracker(self.archive_ids, self.scheduler)
         self.downloader = FakeDownloader()
         self.installer = FakeInstaller(installer_result)
         self.locks = locks or FakeLocks()
@@ -412,6 +413,34 @@ class DownloadTest(DialogTestCase):
         hint = self.table.itemDelegateForColumn(COL_STATUS).sizeHint(QStyleOptionViewItem(), index)
         self.assertGreater(self.table.columnWidth(COL_STATUS), before)
         self.assertGreaterEqual(self.table.columnWidth(COL_STATUS), hint.width())
+
+
+class UnmatchedTest(DialogTestCase):
+    def test_a_download_that_never_matches_is_released_and_can_be_retried(self):
+        self.open_scanned()
+        self.button("download_button").click()
+        self.assertTrue(self.spinning())
+        self.scheduler.fire(DOWNLOAD_PATIENCE_MS)
+        self.assertEqual("Not matched", self.status("Alpha"))
+        self.assertFalse(self.spinning())
+        self.assertEqual(
+            "Downloads complete: 0 downloaded, 0 failed, 1 not matched.", self.downloads()
+        )
+        self.assertTrue(self.checkable("Alpha"))
+        self.assertTrue(self.model.setData(self.index("Alpha", COL_CHECK), Qt.CheckState.Checked,
+                                           Qt.ItemDataRole.CheckStateRole))
+        self.button("download_button").click()
+        self.assertEqual("Downloading", self.status("Alpha"))
+        self.assertEqual("Downloads: 0/1 finished", self.downloads())
+
+    def test_every_download_can_be_unmatched(self):
+        self.open_scanned()
+        self.set_checked("Beta")
+        self.button("download_button").click()
+        self.scheduler.fire(DOWNLOAD_PATIENCE_MS)
+        self.assertEqual(
+            "Downloads complete: 0 downloaded, 0 failed, 2 not matched.", self.downloads()
+        )
 
 
 class QueueProgressTest(DialogTestCase):

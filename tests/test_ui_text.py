@@ -15,6 +15,7 @@ from nexus_auto_updater.app.session import (
     Queued,
     ScanError,
     Skipped,
+    Unmatched,
     Unresolved,
     UpdateEntry,
     UpToDate,
@@ -38,6 +39,7 @@ STARTED = {
     "Downloading": Downloading(),
     "Downloaded": Downloaded("a.7z"),
     "Download failed": DownloadFailed(),
+    "Not matched": Unmatched(),
     "Installed": Installed("a.7z"),
     "Install cancelled": InstallCancelled("a.7z"),
 }

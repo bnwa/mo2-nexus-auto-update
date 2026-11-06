@@ -14,6 +14,7 @@ from ..app.session import (
     Installed,
     Progress,
     Queued,
+    Unmatched,
 )
 from .qt_types import present
 from .table_model import COL_STATUS, PROGRESS_ROLE
@@ -64,7 +65,7 @@ def _stage_painter(progress: Progress) -> Optional[StagePainter]:
             return _downloading
         case Downloaded() | Installed():
             return _done
-        case DownloadFailed():
+        case Unmatched() | DownloadFailed():
             return _failed
         case _:
             assert_never(progress)

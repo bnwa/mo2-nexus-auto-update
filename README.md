@@ -53,7 +53,9 @@ Hover over a cell for more detail: file IDs, MO2's recorded versions, and the fu
 | **Skipped** | The plugin can't download for this mod (for example it belongs to a different game than the one MO2 is managing). |
 | **Error** | Nexus couldn't be asked about this mod (network trouble, hidden mod, etc.). |
 
-After an action starts, the status shows its progress instead: **Queued**, **Downloading**, **Downloaded**, **Download failed**, **Installed**, **Install cancelled**.
+After an action starts, the status shows its progress instead: **Queued**, **Downloading**, **Downloaded**, **Download failed**, **Not matched**, **Installed**, **Install cancelled**.
+
+**Not matched** means MO2 hasn't reported a matching archive within 30 minutes. The plugin stops counting the download as running, but the row still updates if the archive does arrive. You can also tick the row and download it again; that downloads the file a second time, so a download that was only slow ends up as two archives.
 
 A mod installed from several Nexus files (for example a main file plus an optional add-on) gets one row per file.
 

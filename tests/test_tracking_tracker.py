@@ -1,6 +1,6 @@
 import unittest
 
-from nexus_auto_updater.tracking.tracker import DEFAULT_RETRY_DELAYS_MS, DownloadTracker
+from nexus_auto_updater.tracking.tracker import DEFAULT_RETRY_DELAYS_MS, DownloadTracker, Expiry
 from tests.fakes import ArchiveIds, ManualScheduler
 
 ARCHIVE = r"C:\Modding\MO2\downloads\SkyUI_5_2_SE-12604-5-2SE.7z"
@@ -158,6 +158,40 @@ class LifecycleTest(TrackerTestCase):
         self.tracker.set_listener(lambda *args: self.resolved.append(args))
         self.tracker.download_finished(ARCHIVE, True)
         self.assertEqual([], self.resolved)
+
+
+class ExpiryTest(TrackerTestCase):
+    def setUp(self):
+        super().setUp()
+        self.expired = []
+        self.ticket = self.tracker.expect(12604, 1, never, Expiry(1000, self.expired.append))
+
+    def test_an_unresolved_expectation_expires_once(self):
+        self.assertEqual([1000], self.scheduler.delays)
+        self.scheduler.fire_all()
+        self.assertEqual([self.ticket], self.expired)
+
+    def test_a_resolved_expectation_does_not_expire(self):
+        self.ids.ids[ARCHIVE] = (12604, 1)
+        self.tracker.download_finished(ARCHIVE, True)
+        self.scheduler.fire_all()
+        self.assertEqual([], self.expired)
+
+    def test_a_cancelled_expectation_does_not_expire(self):
+        self.tracker.cancel(self.ticket)
+        self.scheduler.fire_all()
+        self.assertEqual([], self.expired)
+
+    def test_an_expired_expectation_still_resolves(self):
+        self.scheduler.fire_all()
+        self.ids.ids[ARCHIVE] = (12604, 1)
+        self.tracker.download_finished(ARCHIVE, True)
+        self.assertEqual([(self.ticket, ARCHIVE, True)], self.resolved)
+
+    def test_expectations_without_an_expiry_schedule_nothing(self):
+        self.scheduler.pending.clear()
+        self.tracker.expect(12604, 2, never)
+        self.assertEqual([], self.scheduler.pending)
 
 
 if __name__ == "__main__":

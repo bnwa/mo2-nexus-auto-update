@@ -10,7 +10,6 @@ Open issues and ideas, roughly in priority order. See [`ARCH.md`](ARCH.md) for w
 
 - [ ] **`.meta` timing is a guess.** The tracker re-reads an archive's `.meta` for about 1.75 s, assuming MO2 sometimes reports completion before writing `fileID`. Observe MO2 2.5.2's actual timing and adjust `DEFAULT_RETRY_DELAYS_MS` in `tracking/tracker.py`.
 - [ ] **Duplicate-download naming is a guess.** `nexus/archives.py` ignores a trailing `(1)`-style suffix. Confirm how MO2 names a second download of the same file.
-- [ ] **Unmatched downloads stay on "Downloading"** and keep the downloads line counting them (and the row's spinner turning) until the dialog closes. They also hold one of the `max_concurrent_downloads` slots, so queued rows can stall behind them (worst at a limit of 1). By decision there is no "Locate archive…" action, because users can update manually. A timeout that marks the row as unmatched and releases the batch count could still be worth adding (`app/session.py` plus `app/sync.py`).
 
 ## Nexus v2 API (beta)
 

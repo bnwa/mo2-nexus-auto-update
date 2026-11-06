@@ -199,12 +199,14 @@ class UpdaterDialog(QDialog):
             case NoBatch():
                 self._downloads.setVisible(False)
                 return
-            case InProgress(done=done, failed=failed):
-                failures = f", {failed} failed" if failed else ""
-                self._downloads.setText(f"Downloads: {done}/{batch.total} finished{failures}")
-            case Finished(downloaded=downloaded, failed=failed):
+            case InProgress(done=done, failed=failed, unmatched=unmatched):
+                problems = f", {failed} failed" if failed else ""
+                problems += f", {unmatched} not matched" if unmatched else ""
+                self._downloads.setText(f"Downloads: {done}/{batch.total} finished{problems}")
+            case Finished(downloaded=downloaded, failed=failed, unmatched=unmatched):
+                not_matched = f", {unmatched} not matched" if unmatched else ""
                 self._downloads.setText(
-                    f"Downloads complete: {downloaded} downloaded, {failed} failed."
+                    f"Downloads complete: {downloaded} downloaded, {failed} failed{not_matched}."
                     + (" Use 'Install downloaded…' to install them." if downloaded else "")
                 )
             case _:

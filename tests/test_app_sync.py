@@ -12,11 +12,13 @@ from nexus_auto_updater.app.scan import (
     StopReason,
 )
 from nexus_auto_updater.app.session import (
+    DOWNLOAD_PATIENCE_MS,
     DownloadFailed,
     Downloaded,
     Downloading,
     Installed,
     Queued,
+    Unmatched,
     UpdateSession,
 )
 from nexus_auto_updater.app.sync import (
@@ -59,7 +61,8 @@ class SyncTestCase(unittest.TestCase):
 
     def setUp(self):
         self.ids = ArchiveIds()
-        self.tracker = DownloadTracker(self.ids, ManualScheduler())
+        self.scheduler = ManualScheduler()
+        self.tracker = DownloadTracker(self.ids, self.scheduler)
         self.downloader = FakeDownloader()
         self.installer = FakeInstaller()
         self.locks = FakeLocks()
@@ -283,45 +286,54 @@ class DownloadBatchTest(SyncTestCase):
     def test_batch_counts_until_every_download_finishes(self):
         a, b = self.scanning((1, selection(1)), (2, selection(2)))
         self.sync.download_selected()
-        self.assertEqual(InProgress(frozenset({a, b}), 0, 0), self.sync.status().batch)
+        self.assertEqual(InProgress(frozenset({a, b}), 0, 0, 0), self.sync.status().batch)
         self.assertEqual(2, self.sync.status().batch.total)
         self.assertEqual([Downloading, Queued], self.progress(a, b))
         self.finish_download(a)
-        self.assertEqual(InProgress(frozenset({a, b}), 1, 0), self.sync.status().batch)
+        self.assertEqual(InProgress(frozenset({a, b}), 1, 0, 0), self.sync.status().batch)
         self.finish_download(b)
-        self.assertEqual(Finished(2, 0), self.sync.status().batch)
+        self.assertEqual(Finished(2, 0, 0), self.sync.status().batch)
 
     def test_failures_are_counted(self):
         a, b = self.scanning((1, selection(1)), (2, selection(2)))
         self.sync.download_selected()
         self.finish_download(a, succeeded=False)
-        self.assertEqual(InProgress(frozenset({a, b}), 1, 1), self.sync.status().batch)
+        self.assertEqual(InProgress(frozenset({a, b}), 1, 1, 0), self.sync.status().batch)
         self.finish_download(b)
-        self.assertEqual(Finished(1, 1), self.sync.status().batch)
+        self.assertEqual(Finished(1, 1, 0), self.sync.status().batch)
 
     def test_a_new_download_after_finishing_starts_a_new_batch(self):
         a, b = self.scanning((1, selection(1)), (2, selection(2, Verdict.REVIEW)))
         self.sync.download_selected()
         self.finish_download(a)
-        self.assertEqual(Finished(1, 0), self.sync.status().batch)
+        self.assertEqual(Finished(1, 0, 0), self.sync.status().batch)
         self.sync.set_selected(b, True)
         self.sync.download_selected()
-        self.assertEqual(InProgress(frozenset({b}), 0, 0), self.sync.status().batch)
+        self.assertEqual(InProgress(frozenset({b}), 0, 0, 0), self.sync.status().batch)
 
     def test_downloads_added_while_running_join_the_batch(self):
         a, b = self.scanning((1, selection(1)), (2, selection(2, Verdict.REVIEW)))
         self.sync.download_selected()
         self.sync.set_selected(b, True)
         self.sync.download_selected()
-        self.assertEqual(InProgress(frozenset({a, b}), 0, 0), self.sync.status().batch)
+        self.assertEqual(InProgress(frozenset({a, b}), 0, 0, 0), self.sync.status().batch)
 
     def test_a_dequeued_download_counts_as_finished(self):
         a, b = self.scanning((1, selection(1)), (2, selection(2)))
         self.sync.download_selected()
         self.sync.set_locked(2, True)
-        self.assertEqual(InProgress(frozenset({a, b}), 1, 0), self.sync.status().batch)
+        self.assertEqual(InProgress(frozenset({a, b}), 1, 0, 0), self.sync.status().batch)
         self.finish_download(a)
-        self.assertEqual(Finished(2, 0), self.sync.status().batch)
+        self.assertEqual(Finished(2, 0, 0), self.sync.status().batch)
+
+    def test_unmatched_downloads_are_counted_apart_and_release_the_batch(self):
+        a, b = self.scanning((1, selection(1)), (2, selection(2)))
+        self.sync.download_selected()
+        self.scheduler.fire(DOWNLOAD_PATIENCE_MS)
+        self.assertEqual([Unmatched, Downloading], self.progress(a, b))
+        self.assertEqual(InProgress(frozenset({a, b}), 1, 0, 1), self.sync.status().batch)
+        self.finish_download(b)
+        self.assertEqual(Finished(1, 0, 1), self.sync.status().batch)
 
     def test_nothing_selected_starts_nothing(self):
         self.scanning((1, selection(1, Verdict.REVIEW)))
@@ -336,9 +348,9 @@ class DownloadBatchTest(SyncTestCase):
         self.sync.download_selected()
         self.runner.deliver(FAILED)
         self.assertEqual(Stopped(FAILED), self.sync.status().scan)
-        self.assertEqual(InProgress(frozenset({key}), 0, 0), self.sync.status().batch)
+        self.assertEqual(InProgress(frozenset({key}), 0, 0, 0), self.sync.status().batch)
         self.finish_download(key)
-        self.assertEqual(Finished(1, 0), self.sync.status().batch)
+        self.assertEqual(Finished(1, 0, 0), self.sync.status().batch)
         self.assertEqual(Stopped(FAILED), self.sync.status().scan)
 
 

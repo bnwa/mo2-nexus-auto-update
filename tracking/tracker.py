@@ -1,6 +1,6 @@
 """Match finished archives to expected downloads.
 
-Pure Python: reading archive metadata and scheduling retries are supplied by the
+Pure Python: reading archive metadata and scheduling retries and expiries are supplied by the
 caller, so this module knows nothing of MO2, Qt or Nexus naming schemes.
 """
 
@@ -19,6 +19,17 @@ ResolvedListener = Callable[[Ticket, str, bool], None]
 # Waits before re-reading an archive's metadata in case the host has not written
 # its IDs yet (about 1.75 s in total).
 DEFAULT_RETRY_DELAYS_MS = (250, 500, 1000)
+
+
+@dataclass(frozen=True)
+class Expiry:
+    """Tell the caller once an expectation is still unresolved after ``after_ms``.
+
+    The expectation stays: an archive that arrives later still resolves it.
+    """
+
+    after_ms: int
+    on_expired: Callable[[Ticket], None]
 
 
 @dataclass(frozen=True)
@@ -45,13 +56,25 @@ class DownloadTracker:
     def set_listener(self, listener: Optional[ResolvedListener]) -> None:
         self._listener = listener
 
-    def expect(self, mod_id: int, file_id: int, name_matches: Callable[[str], bool]) -> Ticket:
+    def expect(
+        self,
+        mod_id: int,
+        file_id: int,
+        name_matches: Callable[[str], bool],
+        expiry: Optional[Expiry] = None,
+    ) -> Ticket:
         ticket = next(self._tickets)
         self._expected[ticket] = _Expectation(mod_id, file_id, name_matches)
+        if expiry is not None:
+            self._schedule(expiry.after_ms, lambda: self._expire(ticket, expiry))
         return ticket
 
     def cancel(self, ticket: Ticket) -> None:
         self._expected.pop(ticket, None)
+
+    def _expire(self, ticket: Ticket, expiry: Expiry) -> None:
+        if ticket in self._expected:
+            expiry.on_expired(ticket)
 
     def download_finished(self, archive_path: str, succeeded: bool) -> None:
         self._resolve(archive_path, succeeded, attempt=0)

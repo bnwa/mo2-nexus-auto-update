@@ -17,6 +17,7 @@ from .session import (
     EntryKey,
     Progress,
     Queued,
+    Unmatched,
     UpdateEntry,
     UpdateSession,
     downloadable,
@@ -124,6 +125,7 @@ class InProgress:
     keys: FrozenSet[EntryKey]
     done: int
     failed: int
+    unmatched: int
 
     @property
     def total(self) -> int:
@@ -134,6 +136,7 @@ class InProgress:
 class Finished:
     downloaded: int
     failed: int
+    unmatched: int
 
 
 BatchState = Union[NoBatch, InProgress, Finished]
@@ -141,10 +144,10 @@ BatchState = Union[NoBatch, InProgress, Finished]
 
 def batch_started(batch: BatchState, key: EntryKey) -> BatchState:
     match batch:
-        case InProgress(keys=keys, done=done, failed=failed):
-            return InProgress(keys | {key}, done, failed)
+        case InProgress(keys=keys, done=done, failed=failed, unmatched=unmatched):
+            return InProgress(keys | {key}, done, failed, unmatched)
         case NoBatch() | Finished():
-            return InProgress(frozenset({key}), 0, 0)
+            return InProgress(frozenset({key}), 0, 0, 0)
         case _:
             assert_never(batch)
 
@@ -155,9 +158,10 @@ def batch_settled(batch: BatchState, progress_of: Callable[[EntryKey], Progress]
             steps = [progress_of(key) for key in keys]
             done = sum(1 for step in steps if not isinstance(step, (Queued, Downloading)))
             failed = sum(1 for step in steps if isinstance(step, DownloadFailed))
+            unmatched = sum(1 for step in steps if isinstance(step, Unmatched))
             if done < len(keys):
-                return InProgress(keys, done, failed)
-            return Finished(len(keys) - failed, failed)
+                return InProgress(keys, done, failed, unmatched)
+            return Finished(len(keys) - failed - unmatched, failed, unmatched)
         case NoBatch() | Finished():
             return batch
         case _:
