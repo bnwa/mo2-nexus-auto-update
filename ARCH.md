@@ -50,7 +50,7 @@ graph TD
 | `ui` | `app`, `domain` | `nexus`, `host`, `tracking`, `mobase` |
 | `plugin.py` | everything | — |
 
-Adapters (`nexus`, `host`) depend inward on the ports the application defines; the application never imports an adapter. Only `plugin.py` knows that the file source is Nexus v2 and that the host is MO2.
+Adapters (`nexus`, `host`) depend inward on the ports the application defines; the application never imports an adapter. Only `plugin.py` knows that the file source is Nexus v2 and that the host is MO2. The ports speak in Nexus terms (mod IDs, file IDs, the `Downloader` arguments), but nothing in `app` depends on how Nexus answers.
 
 ## Layer responsibilities
 
@@ -98,6 +98,7 @@ It is pure Python: reading metadata (`read_archive_ids`) and scheduling retries 
   A mod's outcome is a closed union, `ModScan = ModChecked | ModSkipped | ModErrored`, and `StopReason` is an enum.
 - `notes.py`: `ModNotes` reads a mod's page URL and description (blocking, cached) for the notes pane.
 - `session.py`: `UpdateSession` owns the session's read model — one `UpdateEntry` per installed file, with two independent closed unions: `Finding` (what the scan concluded: `Skipped`, `ScanError`, `UpToDate`, `Unresolved` or `Offered`) and `Progress` (`Idle`, `Queued`, `Downloading`, `DownloadFailed`, `Downloaded`, `Installed`, `InstallCancelled`), each variant carrying only the data valid in it. `downloadable(entry)` and `installable(entry)` parse an entry once into the state a download or install needs. It owns the mapping from tracker tickets to entries, starts downloads and installs through the ports, and notifies one subscriber when an entry changes. Downloads are queued (`Queued`) and started only while fewer than `max_concurrent_downloads` are in flight; each resolved download starts the next queued one. `close()` withdraws its expectations from the tracker, which outlives sessions. It also holds the session's `dependency_graph` (`None` until loaded). Entries of a Nexus mod the user locked (`set_locked`, persisted through `ModLocks`) keep their scan verdict but can't be downloaded or installed; locking dequeues queued downloads.
+- `sync.py`: `Sync` orchestrates one run on top of `UpdateSession`, so a view only renders snapshots and forwards input. It runs the scan through the `ScanRunner` port (defined here, not in `ports.py`, because it names `ScanPlan`, which already imports `ports`) and keeps four independent pieces of state, each moved by pure transition functions over closed unions: the scan lifecycle (`NotStarted`, `NothingToScan`, `Scanning`, `Stopped`, `Complete`), the download batch (`NoBatch`, `InProgress`, `Finished`), the selection (entries chosen for download, always a subset of the downloadable ones) and the entries. Late or out-of-order events never move a state backwards: a `Stopped` scan stays stopped when its runner finishes. Snapshots are `rows()` (append-only), `entry(key)`, `is_selected(key)` and `status()`; one subscriber is told about `RowsAdded`, `RowChanged` and `StatusChanged`. The `ScanRunner` contract: callbacks arrive on the thread that owns `Sync`, and none arrives after `stop()` returns.
 
 ### `nexus/` — Nexus v2 adapter
 
@@ -125,7 +126,7 @@ It is pure Python: reading metadata (`read_archive_ids`) and scheduling retries 
 ### `ui/` — presentation
 
 - `dialog.py`: `UpdaterDialog` receives a `ScanPlan`, an `UpdateSession` and two strings. It owns purely presentational state: which table row shows which entry key, the latest entry snapshots, which entries the progress bar is counting, and the checkbox selection.
-- `scan_worker.py`: runs `ScanPlan.run()` on a `QThread` and forwards events as a signal. Session calls happen on the GUI thread.
+- `scan_worker.py`: `ScanWorker` runs `ScanPlan.run()` on a `QThread` and forwards events as a signal; `QtScanRunner` implements `ScanRunner` over it, delivering callbacks on the GUI thread and dropping signals the worker queued before `stop()`. Session calls happen on the GUI thread.
 - `header.py`: the select-all checkbox header.
 - `notes.py`: `NotesPane` shows the selected row's file descriptions, changelogs and mod page, fetching the page on a daemon thread. Author markup (BBCode mixed with HTML) is escaped and only links (http/https) and basic styles are rebuilt.
 - `text.py`: all display strings and colours for `Finding`, `Progress`, files, and scan-stop reasons, as exhaustive `match`es.

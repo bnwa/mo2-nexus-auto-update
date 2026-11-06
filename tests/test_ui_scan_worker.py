@@ -1,10 +1,11 @@
 import threading
+import time
 
 from tests import HAS_QT, QtTestCase, wait_until
 from tests.fakes import Gate
 
 if HAS_QT:
-    from nexus_auto_updater.ui.scan_worker import ScanWorker
+    from nexus_auto_updater.ui.scan_worker import QtScanRunner, ScanWorker
 
 
 class FakePlan:
@@ -83,3 +84,76 @@ class ScanWorkerTest(QtTestCase):
         parent = QObject()
         self.addCleanup(parent.deleteLater)
         self.assertIs(parent, ScanWorker(FakePlan([]), parent).parent())
+
+
+class RunningPlan:
+    """Yields ``first``, then spins until asked to stop."""
+
+    def __init__(self):
+        self.entered = threading.Event()
+        self.saw_stop = threading.Event()
+
+    def run(self, should_stop):
+        yield "first"
+        self.entered.set()
+        while not should_stop():
+            time.sleep(0.001)
+        self.saw_stop.set()
+
+
+class QtScanRunnerTest(QtTestCase):
+    def setUp(self):
+        super().setUp()
+        self.runner = QtScanRunner()
+        self.addCleanup(self.runner.deleteLater)
+        self.addCleanup(self.runner.stop)
+        self.events = []
+        self.finished = []
+        self.threads = []
+
+    def start(self, plan):
+        def on_event(event):
+            self.threads.append(threading.current_thread())
+            self.events.append(event)
+
+        self.runner.start(plan, on_event, lambda: self.finished.append(True))
+
+    def test_delivers_events_then_finish_on_the_gui_thread(self):
+        self.start(FakePlan(["a", "b"]))
+        wait_until(lambda: self.finished)
+        self.assertEqual(["a", "b"], self.events)
+        self.assertEqual([threading.main_thread()] * 2, self.threads)
+
+    def test_nothing_is_delivered_after_stop_even_if_already_queued(self):
+        done = threading.Event()
+
+        class Plan:
+            def run(self, should_stop):
+                yield "a"
+                yield "b"
+                done.set()
+
+        self.start(Plan())
+        # Waiting without pumping the event loop leaves every signal queued.
+        self.assertTrue(done.wait(5))
+        self.runner.stop()
+        wait_until(lambda: True)
+        self.assertEqual([], self.events)
+        self.assertEqual([], self.finished)
+
+    def test_stop_interrupts_a_running_scan(self):
+        plan = RunningPlan()
+        self.start(plan)
+        wait_until(lambda: self.events == ["first"] and plan.entered.is_set())
+        self.runner.stop()
+        self.assertTrue(plan.saw_stop.is_set())
+        wait_until(lambda: True)
+        self.assertEqual(["first"], self.events)
+        self.assertEqual([], self.finished)
+
+    def test_stop_is_safe_before_start_and_repeatable(self):
+        self.runner.stop()
+        self.start(FakePlan([]))
+        wait_until(lambda: self.finished)
+        self.runner.stop()
+        self.runner.stop()

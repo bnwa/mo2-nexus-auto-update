@@ -161,3 +161,35 @@ class Gate:
         self.entered.set()
         if not self.release.wait(timeout):
             raise TimeoutError("Gate was never released")
+
+
+class FakeScanRunner:
+    """A ``ScanRunner`` that delivers events when the test says so, on the test's thread."""
+
+    def __init__(self, synchronous: bool = False):
+        self.synchronous = synchronous
+        self.starts = 0
+        self.stopped = False
+        self.plan = None
+        self.on_event: Callable = lambda event: None
+        self.on_finished: Callable = lambda: None
+
+    def start(self, plan, on_event, on_finished) -> None:
+        self.starts += 1
+        self.plan, self.on_event, self.on_finished = plan, on_event, on_finished
+        if self.synchronous:
+            self.run_plan()
+
+    def stop(self) -> None:
+        self.stopped = True
+
+    def deliver(self, event) -> None:
+        self.on_event(event)
+
+    def finish(self) -> None:
+        self.on_finished()
+
+    def run_plan(self) -> None:
+        for event in self.plan.run(should_stop=lambda: False):
+            self.on_event(event)
+        self.on_finished()
