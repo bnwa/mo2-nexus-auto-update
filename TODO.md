@@ -11,6 +11,7 @@ The groundwork exists: `domain/requirements.py` models the requirement graph amo
 
 ## Verification
 
+- [ ] **Re-run a download and install in MO2 end to end.** The earlier end-to-end check predates the refactor of the dialog, scan threading, install flow and status display, and this suite uses fakes throughout. Check MO2's own behaviour: real downloads are reported and matched to their rows (timing of `.meta` writes included); `installMod` with its Replace prompt and FOMOD wizards installs the archive, including while downloads finish behind the prompt; closing the dialog mid-scan stops cleanly; the row icons look right at display scaling; and a download MO2 never reports shows as **Not matched** after 30 minutes.
 - [ ] **Confirm `IPluginGame.nexusGameID()`** returns the numeric v2 game ID (1704 for Skyrim SE). The adapter resolves the ID from the game's domain name when this returns 0, but a wrong non-zero value would not be detected.
 
 ## Download matching
@@ -40,11 +41,12 @@ The groundwork exists: `domain/requirements.py` models the requirement graph amo
 
 ## Download progress
 
-MO2 reports no progress for downloads (`IDownloadManager` in the 2.5.2 stubs has no progress, size or query-in-flight; the 2.5.3 beta stubs weren't checked), so the UI shows a stage per row (icon) and a "N/M finished" line, not a percentage. We will eventually want a better way to communicate progress. These are the constraints on any revision, so a design starts from them:
+MO2 reports no progress for downloads (`IDownloadManager` in the 2.5.2 stubs has no progress, size or query-in-flight; the 2.5.3 beta stubs weren't checked), so the UI shows a stage per row (icon) and a "N/M finished" line, not a percentage. We will eventually want a better way to communicate progress.
 
-- [ ] **Per-row percentages need data MO2 doesn't give.** The only route found is polling MO2's partial download file on disk against the file's size from Nexus. That needs a new `host` filesystem port, a new field from the beta v2 API (no file size is fetched today), and matching partial files to rows by guessed naming rules (which `nexus/archives.py` already admits are guesses). Judged fragile; revisit if MO2 grows a progress API (check the 2.5.3 stubs first).
-- [ ] **Qt has no circular progress widget.** `QProgressBar` is linear and its busy mode doesn't animate inside a cell, and `setIndexWidget` scales poorly and fights the filter proxy. That is why `ui/status_delegate.py` draws the spinner itself with `QPainter.drawArc` as the status cell's decoration. A percentage in that cell would be a delegate drawing a sweep angle (or a bar), not a widget; any new indicator should stay a delegate.
-- [ ] **A time-based release is a stand-in, not progress.** `DOWNLOAD_PATIENCE_MS` frees an unmatched download after 30 minutes only because there is nothing better to go on; real progress could replace it with a proper stalled/slow distinction.
+- [ ] **Find a better way to communicate download progress.** Constraints any design starts from:
+  - MO2 gives no data to build it from. Per-row percentages would need MO2's partial download file on disk polled against the file's size from Nexus. That means a new `host` filesystem port, a new field from the beta v2 API (no file size is fetched today), and matching partial files to rows by guessed naming rules (which `nexus/archives.py` already admits are guesses). Judged fragile; revisit if MO2 grows a progress API (check the 2.5.3 stubs first).
+  - Qt has no circular progress widget. `QProgressBar` is linear and its busy mode doesn't animate inside a cell, and `setIndexWidget` scales poorly and fights the filter proxy. That is why `ui/status_delegate.py` draws the spinner itself with `QPainter.drawArc` as the status cell's decoration. A percentage in that cell would be a delegate drawing a sweep angle (or a bar), not a widget, so any new indicator should stay a delegate.
+  - `DOWNLOAD_PATIENCE_MS` frees an unmatched download after 30 minutes only because there is nothing better to go on. Real progress could replace it with a proper stalled/slow distinction.
 
 ## Observations outside the plugin
 

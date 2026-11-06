@@ -73,7 +73,7 @@ Every production module is at 100% line and branch coverage. Keep it there:
 
 ### Type checking
 
-pyright is configured in `pyrightconfig.json`: `domain/`, `tracking/` and `app/` are checked in strict mode, everything else in standard mode. PyQt6 return values the stubs type as Optional are narrowed with `ui.qt_types.present`. The repo must stay clean:
+pyright is configured in `pyrightconfig.json`: `domain/`, `tracking/` and `app/` are checked in strict mode, everything else in standard mode. PyQt6 return values the stubs type as Optional are narrowed with `ui.qt_types.present`. `tests/` is deliberately outside its scope (a first run found 239 errors, mostly from untyped fakes), but `app/` and the rest of the production code are checked. The repo must stay clean:
 
 ```powershell
 .venv\Scripts\pyright
