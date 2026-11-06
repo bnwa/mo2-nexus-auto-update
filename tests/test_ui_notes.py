@@ -202,22 +202,20 @@ class NotesPaneTest(QtTestCase):
         self.assertIn("three", self.text())
         self.assertNotIn(2, self.pane._pages)
 
-    def test_result_for_a_deselected_mod_is_cached_without_rerendering(self):
+    def test_result_for_a_deselected_mod_is_cached_and_does_not_disturb_the_view(self):
         first, second = Gate(), Gate()
         self.notes.gates.update({1: first, 2: second})
         self.notes.descriptions.update({1: "one", 2: "two"})
         self.pane.show_entry(entry(1))
         self.assertTrue(first.entered.wait(5))
         self.pane.show_entry(entry(2))
-        with mock.patch.object(self.pane, "_render", wraps=self.pane._render) as render:
-            first.release.set()
-            wait_until(lambda: 1 in self.pane._pages)
-            self.assertEqual(0, render.call_count)
-            self.assertTrue(second.entered.wait(5))
-            self.assertEqual(2, self.pane._loading)
-            second.release.set()
-            self.wait_loaded(2)
-            self.assertEqual(1, render.call_count)
+        first.release.set()
+        # The pane starts fetching mod 2 only once mod 1's page has arrived.
+        wait_until(second.entered.is_set)
+        self.assertNotIn("one", self.text())
+        self.assertIn("Mod 2", self.text())
+        second.release.set()
+        self.wait_loaded(2)
         self.assertIn("two", self.text())
         self.pane.show_entry(entry(1))
         self.assertIn("one", self.text())

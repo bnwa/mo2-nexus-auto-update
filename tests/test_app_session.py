@@ -19,7 +19,6 @@ from nexus_auto_updater.app.session import (
     UpdateSession,
     UpToDate,
     DOWNLOAD_PATIENCE_MS,
-    _never,
     downloadable,
     installable,
 )
@@ -143,7 +142,6 @@ class RecordScanTest(SessionTestCase):
         self.assertEqual(DOWNLOADS + name, self.entry(entry.key).progress.archive)
 
     def test_without_matcher_names_never_match(self):
-        self.assertFalse(_never("anything.7z"))
         entry = self.ready(1, 1)
         self.session.download(entry.key)
         self.tracker.download_finished(archive(101), True)

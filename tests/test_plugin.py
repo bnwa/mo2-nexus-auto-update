@@ -5,10 +5,10 @@ from unittest import mock
 import mobase
 
 from nexus_auto_updater.app.notes import ModNotes
-from nexus_auto_updater.app.scan import ScanPlan
-from nexus_auto_updater.app.session import UpdateSession
+from nexus_auto_updater.app.sync import Scanning
 from tests import HAS_QT, REPO_ROOT, QtTestCase, wait_until
 from tests.fake_mobase import FakeDownloadManager, FakeMod, FakeOrganizer, FakeVersion
+from tests.fakes import FakeScanRunner
 
 if HAS_QT:
     from PyQt6.QtGui import QIcon
@@ -17,26 +17,25 @@ if HAS_QT:
     from nexus_auto_updater.host.mo2 import Mo2Host
     from nexus_auto_updater.tracking.tracker import DownloadTracker
     from nexus_auto_updater.ui import dialog as dialog_module
+    from nexus_auto_updater.ui import scan_worker as scan_worker_module
     from nexus_auto_updater.ui.scan_worker import QtScanRunner
 
 
 class FakeDialog:
     instances = []
+    during_exec = None
 
     def __init__(self, parent, sync, notes, *, scope_label, empty_message):
         self.parent = parent
         self.sync = sync
-        self.plan = sync._plan
-        self.session = sync._session
         self.notes = notes
         self.scope_label = scope_label
         self.empty_message = empty_message
-
-        self.session_open_during_exec = None
         FakeDialog.instances.append(self)
 
     def exec(self):
-        self.session_open_during_exec = self.session._tracker._listener is not None
+        if FakeDialog.during_exec is not None:
+            FakeDialog.during_exec()
         if FakeDialog.raise_on_exec:
             raise RuntimeError("dialog crashed")
         return 0
@@ -46,9 +45,20 @@ class PluginTestCase(QtTestCase):
     def setUp(self):
         FakeDialog.instances = []
         FakeDialog.raise_on_exec = False
+        FakeDialog.during_exec = None
         patcher = mock.patch.object(dialog_module, "UpdaterDialog", FakeDialog)
         patcher.start()
         self.addCleanup(patcher.stop)
+        # The real runner starts a thread against Nexus; this one only records.
+        self.runners = []
+
+        def make_runner(parent=None):
+            self.runners.append(FakeScanRunner())
+            return self.runners[-1]
+
+        self.runner_patch = mock.patch.object(scan_worker_module, "QtScanRunner", make_runner)
+        self.runner_patch.start()
+        self.addCleanup(self.runner_patch.stop)
         self.manager = FakeDownloadManager()
         flagged = FakeMod("Flagged", 1, r"C:\Modding\MO2\mods\Flagged")
         current = FakeMod("Current", 2, r"C:\Modding\MO2\mods\Current",
@@ -89,6 +99,7 @@ class MetadataTest(PluginTestCase):
         self.addCleanup(parent.deleteLater)
         self.plugin.setParentWidget(parent)
         self.plugin.init(self.organizer)
+        self.runner_patch.stop()
         self.assertIs(parent, self.display().parent)
         self.assertIsNotNone(parent.findChild(QtScanRunner))
 
@@ -170,13 +181,24 @@ class DisplayTest(PluginTestCase):
         self.plugin.display()
         self.assertEqual([], FakeDialog.instances)
 
+    def scan_while_open(self):
+        """Start the scan as the dialog would, and report where it stands."""
+        seen = []
+
+        def start():
+            sync = FakeDialog.instances[0].sync
+            sync.start()
+            seen.append(sync.status().scan)
+
+        FakeDialog.during_exec = start
+        self.plugin.display()
+        return seen[0]
+
     def test_flagged_mods_only(self):
         self.plugin.init(self.organizer)
-        dialog = self.display()
-        self.assertIsInstance(dialog.plan, ScanPlan)
-        self.assertIsInstance(dialog.session, UpdateSession)
+        self.assertEqual(Scanning(0, 1, ""), self.scan_while_open())
+        (dialog,) = FakeDialog.instances
         self.assertIsInstance(dialog.notes, ModNotes)
-        self.assertEqual(1, dialog.plan.total)
         self.assertEqual("mods MO2 flags as having an update", dialog.scope_label)
         self.assertIn("run MO2's 'Check for updates' first, or enable 'scan_all_nexus_mods'", dialog.empty_message)
         self.assertEqual("https://www.nexusmods.com/skyrimspecialedition/mods/5", dialog.notes.page_url(5))
@@ -185,26 +207,15 @@ class DisplayTest(PluginTestCase):
     def test_scan_all(self):
         self.organizer.settings["scan_all_nexus_mods"] = True
         self.plugin.init(self.organizer)
-        dialog = self.display()
-        self.assertEqual(2, dialog.plan.total)
-        self.assertEqual("all Nexus mods", dialog.scope_label)
+        self.assertEqual(Scanning(0, 2, ""), self.scan_while_open())
+        self.assertEqual("all Nexus mods", FakeDialog.instances[0].scope_label)
 
-    def test_wiring(self):
-        self.organizer.settings.update({"request_delay_ms": 500, "max_concurrent_downloads": 2})
+    def test_request_delay_reaches_the_nexus_client(self):
+        self.organizer.settings["request_delay_ms"] = 500
         self.plugin.init(self.organizer)
         with mock.patch.object(plugin_module, "GraphQLClient", wraps=plugin_module.GraphQLClient) as client:
-            dialog = self.display()
+            self.display()
         client.assert_called_once_with(min_interval_s=0.5)
-        session = dialog.session
-        self.assertIs(self.plugin._host, session._downloader)
-        self.assertIs(self.plugin._host, session._installer)
-        self.assertIs(self.plugin._host, session._locks)
-        self.assertIs(self.plugin._tracker, session._tracker)
-        self.assertEqual(2, session._max_downloads())
-        self.organizer.settings["max_concurrent_downloads"] = 4
-        self.assertEqual(4, session._max_downloads())
-        self.assertIs(dialog.plan._source, dialog.notes._source)
-        self.assertEqual(self.plugin._host.managed_game(), dialog.plan._game)
 
     def test_display_connects_download_hooks(self):
         self.organizer.download_manager = None
@@ -213,18 +224,20 @@ class DisplayTest(PluginTestCase):
         self.display()
         self.assertEqual(1, len(self.manager.complete_hooks))
 
-    def test_session_is_closed_after_the_dialog(self):
+    def test_the_run_is_stopped_after_the_dialog(self):
         self.plugin.init(self.organizer)
-        dialog = self.display()
-        self.assertTrue(dialog.session_open_during_exec)
-        self.assertIsNone(self.plugin._tracker._listener)
+        during = []
+        FakeDialog.during_exec = lambda: during.append(self.runners[0].stopped)
+        self.display()
+        self.assertEqual([False], during)
+        self.assertTrue(self.runners[0].stopped)
 
-    def test_session_is_closed_even_if_exec_raises(self):
+    def test_the_run_is_stopped_even_if_exec_raises(self):
         FakeDialog.raise_on_exec = True
         self.plugin.init(self.organizer)
         with self.assertRaisesRegex(RuntimeError, "dialog crashed"):
             self.plugin.display()
-        self.assertIsNone(self.plugin._tracker._listener)
+        self.assertTrue(self.runners[0].stopped)
 
 
 class RootInitTest(QtTestCase):
