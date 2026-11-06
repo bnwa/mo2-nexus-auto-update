@@ -100,7 +100,7 @@ class ModRequirementSource(Protocol):
 
 
 class Downloader(Protocol):
-    def start_nexus_download(self, mod_id: int, file_id: int) -> None: ...
+    def start_download(self, mod_id: int, file_id: int) -> None: ...
 
 
 class Installer(Protocol):

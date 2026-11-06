@@ -215,9 +215,9 @@ class LocksTest(Mo2TestCase):
 
 
 class DownloadsTest(Mo2TestCase):
-    def test_start_nexus_download(self):
+    def test_start_download(self):
         manager = FakeDownloadManager()
-        self.host(download_manager=manager).start_nexus_download(12604, 1000172397)
+        self.host(download_manager=manager).start_download(12604, 1000172397)
         self.assertEqual([(12604, 1000172397)], manager.started)
 
     def test_hooks_wait_for_the_download_manager(self):

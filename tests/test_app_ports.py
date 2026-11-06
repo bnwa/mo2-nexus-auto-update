@@ -25,7 +25,7 @@ class PortsTest(unittest.TestCase):
         self.assertIsNone(source.mod_page_url(None, GAME, 1))
         self.assertIsNone(source.mod_description(None, GAME, 1))
         self.assertIsNone(ports.ArchiveMatcher.matches(None, "x"))
-        self.assertIsNone(ports.Downloader.start_nexus_download(None, 1, 2))
+        self.assertIsNone(ports.Downloader.start_download(None, 1, 2))
         self.assertIsNone(ports.Installer.install_archive(None, "a", "b"))
         self.assertIsNone(ports.ModLocks.is_locked(None, 1))
         self.assertIsNone(ports.ModLocks.set_locked(None, 1, True))

@@ -170,7 +170,7 @@ sequenceDiagram
     Note over S: starts queued entries while in flight < max_concurrent_downloads
     S->>T: expect(mod_id, file_id, matcher) -> ticket
     S-->>UI: entry changed (DOWNLOADING)
-    S->>H: start_nexus_download(mod_id, file_id)
+    S->>H: start_download(mod_id, file_id)
     H-->>T: download_finished(archive_path, succeeded)
     T->>T: match: .meta file ID, archive name, unique mod ID, retry
     T-->>S: resolved(ticket, archive_path, succeeded)

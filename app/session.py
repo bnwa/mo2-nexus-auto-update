@@ -220,7 +220,7 @@ class UpdateSession:
             )
             self._awaiting[ticket] = key
             self._update(key, phase=Phase.DOWNLOADING)
-            self._downloader.start_nexus_download(entry.mod_id, target.file_id)
+            self._downloader.start_download(entry.mod_id, target.file_id)
 
     def _add(self, entry: UpdateEntry, matcher: Optional[ArchiveMatcher]) -> UpdateEntry:
         self._entries[entry.key] = entry

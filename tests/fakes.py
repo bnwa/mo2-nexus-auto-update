@@ -91,7 +91,7 @@ class FakeDownloader:
     def __init__(self):
         self.calls: List[Tuple[int, int]] = []
 
-    def start_nexus_download(self, mod_id: int, file_id: int) -> None:
+    def start_download(self, mod_id: int, file_id: int) -> None:
         self.calls.append((mod_id, file_id))
 
 

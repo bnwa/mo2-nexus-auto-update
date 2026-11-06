@@ -88,7 +88,7 @@ class Mo2Host:
 
     # --- Downloads (app.ports.Downloader) ---
 
-    def start_nexus_download(self, mod_id: int, file_id: int) -> None:
+    def start_download(self, mod_id: int, file_id: int) -> None:
         # The returned ID only predicts MO2's internal list index, so callers
         # correlate completion through the archive instead.
         self._organizer.downloadManager().startDownloadNexusFile(mod_id, file_id)
