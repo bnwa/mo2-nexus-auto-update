@@ -4,7 +4,7 @@ from collections import deque
 from dataclasses import dataclass, replace
 from enum import Enum
 from itertools import count
-from typing import Callable, Deque, Dict, List, Optional, Tuple
+from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 
 from ..domain.files import ModFile
 from ..domain.requirements import DependencyGraph
@@ -122,7 +122,7 @@ class UpdateSession:
     def record_scan(self, scan: ModScan) -> List[UpdateEntry]:
         """Turn a mod's scan outcome into new entries."""
         mod = scan.mod
-        common = dict(
+        common: Dict[str, Any] = dict(
             mod_name=mod.name,
             mod_id=mod.mod_id,
             version=mod.version,
@@ -146,7 +146,7 @@ class UpdateSession:
                 )
             ]
 
-        added = []
+        added: List[UpdateEntry] = []
         for selection in scan.selections:
             target = selection.target
             entry = UpdateEntry(
@@ -182,7 +182,7 @@ class UpdateSession:
         for key, entry in list(self._entries.items()):
             if entry.mod_id != mod_id or entry.locked == locked:
                 continue
-            changes = dict(locked=locked)
+            changes: Dict[str, Any] = dict(locked=locked)
             if locked and entry.phase is Phase.QUEUED:
                 self._queue.remove(key)
                 changes["phase"] = Phase.IDLE
@@ -228,7 +228,7 @@ class UpdateSession:
             self._matchers[entry.key] = matcher
         return entry
 
-    def _update(self, key: EntryKey, **changes) -> None:
+    def _update(self, key: EntryKey, **changes: Any) -> None:
         entry = replace(self._entries[key], **changes)
         self._entries[key] = entry
         if self._listener is not None:

@@ -29,6 +29,7 @@ The second command should print `Python 3.12.x`. If Python is installed elsewher
 
 - **PyQt6 6.7.1**, the version MO2 2.5.2 ships. The `ui/` and `plugin.py` tests use it.
 - **coverage**, to measure test coverage.
+- **pyright** (with its bundled Node.js) and **mobase-stubs 2.5.2**, for static type checking.
 
 The plugin itself has no other dependencies.
 
@@ -69,6 +70,14 @@ Every production module is at 100% line and branch coverage. Keep it there:
 ```
 
 The `Missing` column lists uncovered lines and branches. Run `.venv\Scripts\python -m coverage html` for a browsable report in `htmlcov\`.
+
+### Type checking
+
+pyright is configured in `pyrightconfig.json`: `domain/`, `tracking/` and `app/` are checked in strict mode, everything else in standard mode. PyQt6 return values the stubs type as Optional are narrowed with `ui.qt_types.present`. The repo must stay clean:
+
+```powershell
+.venv\Scripts\pyright
+```
 
 ### Without PyQt6
 
@@ -125,6 +134,7 @@ The automated suite covers the plugin's own behaviour. What's left to check by h
 3. **Run the checks before you commit:**
    - the full suite;
    - the coverage report, which should still be at 100%;
+   - pyright, which should report no errors;
    - the suite without PyQt6, if you touched anything outside `ui/` or `plugin.py`.
 4. **Update the docs** if behaviour changed: `README.md` (for users), `ARCH.md` (structure) or `TODO.md` (open work).
 5. **Commit** one coherent change at a time, using [Conventional Commits](https://www.conventionalcommits.org/). The scope names the layer, e.g. `fix(nexus): retry without dropped fields`. `AGENTS.md` has the full conventions.

@@ -25,6 +25,7 @@ from . import text
 from .header import CenteredCheckDelegate, CheckableHeader
 from .notes import NotesPane
 from .scan_worker import ScanWorker
+from .qt_types import present
 
 COL_CHECK, COL_LOCK, COL_MOD, COL_INSTALLED, COL_TARGET, COL_STATUS, COL_DETAILS = range(7)
 HEADERS = ["", text.LOCK_HEADER, "Mod", "Installed file", "Update to", "Status", "Details"]
@@ -74,9 +75,9 @@ class UpdaterDialog(QDialog):
         self._header = header
         self._table.setHorizontalHeader(header)
         self._table.setHorizontalHeaderLabels(HEADERS)
-        self._table.horizontalHeaderItem(COL_CHECK).setToolTip("Select / deselect all updates")
-        self._table.horizontalHeaderItem(COL_LOCK).setToolTip(text.LOCK_TOOLTIP)
-        self._table.verticalHeader().setVisible(False)
+        present(self._table.horizontalHeaderItem(COL_CHECK)).setToolTip("Select / deselect all updates")
+        present(self._table.horizontalHeaderItem(COL_LOCK)).setToolTip(text.LOCK_TOOLTIP)
+        present(self._table.verticalHeader()).setVisible(False)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.itemChanged.connect(self._on_item_changed)
@@ -131,7 +132,7 @@ class UpdaterDialog(QDialog):
             self._summary.setText(self._empty_message)
             return
         self._worker = ScanWorker(self._plan, self)
-        self._worker.event.connect(self._on_scan_event)
+        self._worker.scan_event.connect(self._on_scan_event)
         self._worker.finished.connect(self._on_scan_finished)
         self._scanning = True
         self._update_buttons()
@@ -240,7 +241,7 @@ class UpdaterDialog(QDialog):
         if entry.locked:
             grey = QBrush(QColor(text.LOCKED_COLOR))
             for column in (COL_MOD, COL_INSTALLED, COL_TARGET, COL_STATUS, COL_DETAILS):
-                self._table.item(index, column).setForeground(grey)
+                present(self._table.item(index, column)).setForeground(grey)
         else:
             status_item.setForeground(QBrush(QColor(text.status_color(entry))))
 
@@ -359,9 +360,9 @@ class UpdaterDialog(QDialog):
 
     # --- Lifetime ---
 
-    def done(self, result: int) -> None:
+    def done(self, a0: int) -> None:
         if self._worker is not None and self._worker.isRunning():
             self._worker.requestInterruption()
             self._worker.wait(5000)
         self._session.subscribe(None)
-        super().done(result)
+        super().done(a0)

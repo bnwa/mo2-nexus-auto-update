@@ -1,8 +1,8 @@
 """Build the dependency graph of the installed mods."""
 
-from typing import Sequence
+from typing import Mapping, Optional, Sequence
 
-from ..domain.requirements import DependencyGraph
+from ..domain.requirements import DependencyGraph, ModRequirements
 from .ports import GameRef, InstalledMod, ModRequirementSource, SourceError
 
 
@@ -16,6 +16,7 @@ def load_dependency_graph(
     Nexus mod IDs of other games would collide with them.
     """
     ids = sorted({mod.mod_id for mod in mods if mod.in_managed_game})
+    requirements: Mapping[int, Optional[ModRequirements]]
     try:
         requirements = source.mod_requirements(game, ids)
     except SourceError:

@@ -1,4 +1,7 @@
-from PyQt6.QtCore import QEvent, QRect, Qt, pyqtSignal
+from typing import Optional, Tuple
+
+from PyQt6.QtCore import QAbstractItemModel, QEvent, QModelIndex, QRect, Qt, pyqtSignal
+from PyQt6.QtGui import QKeyEvent, QMouseEvent, QPainter
 from PyQt6.QtWidgets import (
     QApplication,
     QHeaderView,
@@ -6,7 +9,10 @@ from PyQt6.QtWidgets import (
     QStyledItemDelegate,
     QStyleOptionButton,
     QStyleOptionViewItem,
+    QWidget,
 )
+
+from .qt_types import present
 
 
 class CheckableHeader(QHeaderView):
@@ -24,16 +30,17 @@ class CheckableHeader(QHeaderView):
     def set_state(self, checked: bool, enabled: bool) -> None:
         if (checked, enabled) != (self._checked, self._enabled):
             self._checked, self._enabled = checked, enabled
-            self.viewport().update()
+            present(self.viewport()).update()
 
-    def paintSection(self, painter, rect, logical_index) -> None:
+    def paintSection(self, painter: Optional[QPainter], rect: QRect, logicalIndex: int) -> None:
+        painter = present(painter)
         painter.save()
-        super().paintSection(painter, rect, logical_index)
+        super().paintSection(painter, rect, logicalIndex)
         painter.restore()
-        if logical_index != self._column:
+        if logicalIndex != self._column:
             return
 
-        style = self.style()
+        style = present(self.style())
         width = style.pixelMetric(QStyle.PixelMetric.PM_IndicatorWidth, None, self)
         height = style.pixelMetric(QStyle.PixelMetric.PM_IndicatorHeight, None, self)
         option = QStyleOptionButton()
@@ -48,13 +55,14 @@ class CheckableHeader(QHeaderView):
             option.state |= QStyle.StateFlag.State_Enabled
         style.drawPrimitive(QStyle.PrimitiveElement.PE_IndicatorCheckBox, option, painter, self)
 
-    def mousePressEvent(self, event) -> None:
-        if self.logicalIndexAt(event.position().toPoint()) == self._column:
+    def mousePressEvent(self, e: Optional[QMouseEvent]) -> None:
+        e = present(e)
+        if self.logicalIndexAt(e.position().toPoint()) == self._column:
             if self._enabled:
                 self.toggled.emit(not self._checked)
-            event.accept()
+            e.accept()
             return
-        super().mousePressEvent(event)
+        super().mousePressEvent(e)
 
 
 class CenteredCheckDelegate(QStyledItemDelegate):
@@ -63,7 +71,8 @@ class CenteredCheckDelegate(QStyledItemDelegate):
     Qt always puts an item's check indicator at the cell's left edge.
     """
 
-    def paint(self, painter, option, index) -> None:
+    def paint(self, painter: Optional[QPainter], option: QStyleOptionViewItem, index: QModelIndex) -> None:
+        painter = present(painter)
         opt = QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
         style, widget = _style(opt)
@@ -84,12 +93,19 @@ class CenteredCheckDelegate(QStyledItemDelegate):
             QStyle.PrimitiveElement.PE_IndicatorItemViewItemCheck, check, painter, widget
         )
 
-    def editorEvent(self, event, model, option, index) -> bool:
+    def editorEvent(
+        self,
+        event: Optional[QEvent],
+        model: Optional[QAbstractItemModel],
+        option: QStyleOptionViewItem,
+        index: QModelIndex,
+    ) -> bool:
+        event, model = present(event), present(model)
         flags = index.flags()
         if not (flags & Qt.ItemFlag.ItemIsUserCheckable and flags & Qt.ItemFlag.ItemIsEnabled):
             return False
         kind = event.type()
-        if kind in (
+        if isinstance(event, QMouseEvent) and kind in (
             QEvent.Type.MouseButtonPress,
             QEvent.Type.MouseButtonRelease,
             QEvent.Type.MouseButtonDblClick,
@@ -103,7 +119,7 @@ class CenteredCheckDelegate(QStyledItemDelegate):
             # double-click instead of a press, so each click is exactly one of them.
             if kind == QEvent.Type.MouseButtonRelease:
                 return True
-        elif kind == QEvent.Type.KeyPress:
+        elif isinstance(event, QKeyEvent) and kind == QEvent.Type.KeyPress:
             if event.key() not in (Qt.Key.Key_Space, Qt.Key.Key_Select):
                 return False
         else:
@@ -126,6 +142,6 @@ class CenteredCheckDelegate(QStyledItemDelegate):
         return rect
 
 
-def _style(opt: QStyleOptionViewItem):
+def _style(opt: QStyleOptionViewItem) -> Tuple[QStyle, Optional[QWidget]]:
     widget = opt.widget
-    return (widget.style() if widget is not None else QApplication.style()), widget
+    return present(widget.style() if widget is not None else QApplication.style()), widget

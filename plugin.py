@@ -5,6 +5,7 @@ from typing import List, Optional
 import mobase
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QIcon
+from PyQt6.QtWidgets import QWidget
 
 from .app.notes import ModNotes
 from .app.scan import ScanPlan
@@ -30,7 +31,7 @@ class NexusAutoUpdater(mobase.IPluginTool):
         self._organizer: Optional[mobase.IOrganizer] = None
         self._host: Optional[Mo2Host] = None
         self._tracker: Optional[DownloadTracker] = None
-        self._parent_widget = None
+        self._parent_widget: Optional[QWidget] = None
 
     # --- IPlugin ---
 
@@ -91,8 +92,8 @@ class NexusAutoUpdater(mobase.IPluginTool):
     def icon(self) -> QIcon:
         return QIcon()
 
-    def setParentWidget(self, widget) -> None:
-        self._parent_widget = widget
+    def setParentWidget(self, parent: QWidget) -> None:
+        self._parent_widget = parent
 
     def display(self) -> None:
         if self._host is None or self._tracker is None:
@@ -136,13 +137,16 @@ class NexusAutoUpdater(mobase.IPluginTool):
         return self._organizer.pluginSetting(self.NAME, key)
 
     def _request_delay_ms(self) -> int:
-        try:
-            return max(0, int(self._setting(SETTING_REQUEST_DELAY)))
-        except (TypeError, ValueError):
-            return DEFAULT_REQUEST_DELAY_MS
+        return self._int_setting(SETTING_REQUEST_DELAY, DEFAULT_REQUEST_DELAY_MS, minimum=0)
 
     def _max_concurrent_downloads(self) -> int:
+        return self._int_setting(SETTING_MAX_DOWNLOADS, DEFAULT_MAX_DOWNLOADS, minimum=1)
+
+    def _int_setting(self, key: str, default: int, minimum: int) -> int:
+        value = self._setting(key)
+        if not isinstance(value, (int, float, str)):
+            return default
         try:
-            return max(1, int(self._setting(SETTING_MAX_DOWNLOADS)))
-        except (TypeError, ValueError):
-            return DEFAULT_MAX_DOWNLOADS
+            return max(minimum, int(value))
+        except ValueError:
+            return default

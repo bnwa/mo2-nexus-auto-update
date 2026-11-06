@@ -221,7 +221,9 @@ def _to_requirements(
 def _declared_requirements(node: Dict[str, Any], game_id: int) -> Optional[ModRequirements]:
     requirements = node.get("modRequirements")
     page = requirements.get("nexusRequirements") if isinstance(requirements, dict) else None
-    entries = page.get("nodes") if isinstance(page, dict) else None
+    if not isinstance(page, dict):
+        return None
+    entries = page.get("nodes")
     if not isinstance(entries, list):
         return None
     # `nodesCount` always equals `totalCount`, so it can't reveal a short page.

@@ -1,0 +1,28 @@
+{
+  "pythonVersion": "3.12",
+  "include": [
+    "domain",
+    "tracking",
+    "app",
+    "nexus",
+    "host",
+    "ui",
+    "plugin.py",
+    "__init__.py"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    ".venv",
+    "htmlcov"
+  ],
+  "venvPath": ".",
+  "venv": ".venv",
+  "typeCheckingMode": "standard",
+  "strict": [
+    "domain",
+    "tracking",
+    "app"
+  ],
+  "reportMatchNotExhaustive": "error",
+  "reportMissingModuleSource": "none"
+}

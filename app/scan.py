@@ -1,7 +1,7 @@
 """Check installed mods against the file source and choose their update targets."""
 
 from dataclasses import dataclass, field
-from typing import Callable, Iterator, Mapping, Sequence, Tuple, Union
+from typing import Callable, Dict, Iterator, Mapping, Sequence, Tuple, Union
 
 from ..domain.selection import Selection, plan_updates
 from .ports import (
@@ -25,7 +25,7 @@ class ModScan:
     mod: InstalledMod
     selections: Tuple[Selection, ...] = ()
     # Archive recognition for the selected targets, by file ID (may be partial).
-    target_matchers: Mapping[int, ArchiveMatcher] = field(default_factory=dict)
+    target_matchers: Mapping[int, ArchiveMatcher] = field(default_factory=lambda: {})
     error: str = ""
     skipped_reason: str = ""
 
@@ -107,7 +107,7 @@ class ScanPlan:
 
             consecutive_unavailable = 0
             selections = tuple(plan_updates(mod.installed_file_ids, listing.files))
-            matchers = {}
+            matchers: Dict[int, ArchiveMatcher] = {}
             for selection in selections:
                 if selection.target is not None:
                     matcher = listing.archive_matcher(selection.target.file_id)

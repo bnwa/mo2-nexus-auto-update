@@ -6,7 +6,7 @@ an answer is *known* instead of letting "unknown" read as "none".
 """
 
 from dataclasses import dataclass
-from typing import Dict, FrozenSet, Iterable, Mapping, Optional
+from typing import Dict, FrozenSet, Iterable, Mapping, Optional, Set
 
 
 @dataclass(frozen=True)
@@ -39,7 +39,7 @@ class DependencyGraph:
         }
         self._dependencies: Dict[int, FrozenSet[int]] = {}
         self._missing: Dict[int, FrozenSet[int]] = {}
-        dependents: Dict[int, set] = {}
+        dependents: Dict[int, Set[int]] = {}
         for mod_id, reqs in self._requirements.items():
             declared = reqs.mod_ids - {mod_id}
             present = declared & self._installed

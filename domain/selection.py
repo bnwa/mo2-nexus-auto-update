@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import Iterable, List, Optional, Sequence, Tuple
+from typing import Iterable, List, Optional, Sequence, Set, Tuple
 
 from .files import FileCategory, ModFile
 
@@ -109,7 +109,7 @@ def plan_updates(installed_file_ids: Sequence[int], files: Iterable[ModFile]) ->
     """One selection per installed file, never proposing the same target twice."""
     files = list(files)
     selections: List[Selection] = []
-    proposed = set()
+    proposed: Set[int] = set()
     for file_id in installed_file_ids or [None]:
         selection = select_successor(file_id, files)
         if selection.target is not None:

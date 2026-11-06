@@ -46,7 +46,7 @@ class ArchiveMatcher(Protocol):
 class FileListing:
     files: Tuple[ModFile, ...]
     # Optional per-file archive recognition; sources may provide none.
-    archive_matchers: Mapping[int, ArchiveMatcher] = field(default_factory=dict)
+    archive_matchers: Mapping[int, ArchiveMatcher] = field(default_factory=lambda: {})
 
     def archive_matcher(self, file_id: int) -> Optional[ArchiveMatcher]:
         return self.archive_matchers.get(file_id)

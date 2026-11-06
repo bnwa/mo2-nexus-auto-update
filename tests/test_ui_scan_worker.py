@@ -32,7 +32,7 @@ class ScanWorkerTest(QtTestCase):
         self.addCleanup(worker.deleteLater)
         self.addCleanup(worker.wait, 5000)
         received = []
-        worker.event.connect(received.append)
+        worker.scan_event.connect(received.append)
         worker.start()
         return worker, received
 
@@ -62,7 +62,7 @@ class ScanWorkerTest(QtTestCase):
         worker = ScanWorker(FakePlan(["a", "b"]))
         self.addCleanup(worker.deleteLater)
         received = []
-        worker.event.connect(received.append)
+        worker.scan_event.connect(received.append)
         worker.run()
         self.assertEqual(["a", "b"], received)
 
@@ -71,7 +71,7 @@ class ScanWorkerTest(QtTestCase):
         worker = ScanWorker(plan)
         self.addCleanup(worker.deleteLater)
         received = []
-        worker.event.connect(received.append)
+        worker.scan_event.connect(received.append)
         worker.isInterruptionRequested = lambda: True
         worker.run()
         self.assertEqual([], received)
