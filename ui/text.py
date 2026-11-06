@@ -1,43 +1,29 @@
 """Display text and colours for application states."""
 
-from typing import Optional
+from typing import Optional, Tuple, assert_never
 
 from ..app.scan import ScanFailed, StopReason
-from ..app.session import EntryStatus, Phase, UpdateEntry
+from ..app.session import (
+    DownloadFailed,
+    Downloaded,
+    Downloading,
+    Finding,
+    Idle,
+    InstallCancelled,
+    Installed,
+    Offered,
+    Progress,
+    Queued,
+    ScanError,
+    Skipped,
+    UpdateEntry,
+    Unresolved,
+    UpToDate,
+)
 from ..domain.files import FileCategory, ModFile
 
-STATUS_TEXT = {
-    EntryStatus.READY: "Ready",
-    EntryStatus.REVIEW: "Needs review",
-    EntryStatus.UP_TO_DATE: "Up to date",
-    EntryStatus.UNRESOLVED: "Unresolved",
-    EntryStatus.SKIPPED: "Skipped",
-    EntryStatus.ERROR: "Error",
-}
-STATUS_COLORS = {
-    EntryStatus.READY: "#27ae60",
-    EntryStatus.REVIEW: "#e67e22",
-    EntryStatus.UNRESOLVED: "#c0392b",
-    EntryStatus.ERROR: "#e74c3c",
-    EntryStatus.SKIPPED: "#7f8c8d",
-    EntryStatus.UP_TO_DATE: "#7f8c8d",
-}
-PHASE_TEXT = {
-    Phase.QUEUED: "Queued",
-    Phase.DOWNLOADING: "Downloading",
-    Phase.DOWNLOADED: "Downloaded",
-    Phase.DOWNLOAD_FAILED: "Download failed",
-    Phase.INSTALLED: "Installed",
-    Phase.INSTALL_CANCELLED: "Install cancelled",
-}
-PHASE_COLORS = {
-    Phase.QUEUED: "#45beef",
-    Phase.DOWNLOADING: "#45beef",
-    Phase.DOWNLOADED: "#45beef",
-    Phase.DOWNLOAD_FAILED: "#e74c3c",
-    Phase.INSTALLED: "#27ae60",
-    Phase.INSTALL_CANCELLED: "#e67e22",
-}
+# Order of the scan summary.
+FINDING_LABELS = ("Ready", "Needs review", "Up to date", "Unresolved", "Skipped", "Error")
 
 
 LOCK_HEADER = "\N{LOCK}"
@@ -48,12 +34,81 @@ LOCK_TOOLTIP = (
 LOCKED_COLOR = "#7f8c8d"
 
 
+def _finding_look(finding: Finding) -> Tuple[str, str]:
+    match finding:
+        case Offered(needs_review=True):
+            return "Needs review", "#e67e22"
+        case Offered():
+            return "Ready", "#27ae60"
+        case UpToDate():
+            return "Up to date", "#7f8c8d"
+        case Unresolved():
+            return "Unresolved", "#c0392b"
+        case Skipped():
+            return "Skipped", "#7f8c8d"
+        case ScanError():
+            return "Error", "#e74c3c"
+        case _:
+            assert_never(finding)
+
+
+def finding_label(finding: Finding) -> str:
+    return _finding_look(finding)[0]
+
+
+def finding_detail(finding: Finding) -> str:
+    match finding:
+        case Skipped(reason=detail) | UpToDate(reason=detail) | Unresolved(reason=detail):
+            return detail
+        case Offered(reason=detail):
+            return detail
+        case ScanError(message=detail):
+            return detail
+        case _:
+            assert_never(finding)
+
+
+def _progress_look(progress: Progress) -> Optional[Tuple[str, str]]:
+    """Text and colour of a started update; ``None`` while nothing has happened."""
+    match progress:
+        case Idle():
+            return None
+        case Queued():
+            return "Queued", "#45beef"
+        case Downloading():
+            return "Downloading", "#45beef"
+        case Downloaded():
+            return "Downloaded", "#45beef"
+        case DownloadFailed():
+            return "Download failed", "#e74c3c"
+        case Installed():
+            return "Installed", "#27ae60"
+        case InstallCancelled():
+            return "Install cancelled", "#e67e22"
+        case _:
+            assert_never(progress)
+
+
 def status_text(entry: UpdateEntry) -> str:
-    return PHASE_TEXT.get(entry.phase) or STATUS_TEXT[entry.status]
+    look = _progress_look(entry.progress)
+    return look[0] if look else finding_label(entry.finding)
 
 
 def status_color(entry: UpdateEntry) -> str:
-    return PHASE_COLORS.get(entry.phase) or STATUS_COLORS[entry.status]
+    look = _progress_look(entry.progress)
+    return look[1] if look else _finding_look(entry.finding)[1]
+
+
+def archive_of(progress: Progress) -> Optional[str]:
+    match progress:
+        case Downloaded(archive=archive) | Installed(archive=archive):
+            return archive
+        case InstallCancelled(archive=archive):
+            return archive
+        case Idle() | Queued() | Downloading() | DownloadFailed():
+            return None
+        case _:
+            assert_never(progress)
 
 
 def file_label(mod_file: Optional[ModFile], fallback_file_id: Optional[int] = None) -> str:

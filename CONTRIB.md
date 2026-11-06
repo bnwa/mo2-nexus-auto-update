@@ -28,7 +28,7 @@ The second command should print `Python 3.12.x`. If Python is installed elsewher
 `tests\requirements.txt` installs:
 
 - **PyQt6 6.7.1**, the version MO2 2.5.2 ships. The `ui/` and `plugin.py` tests use it.
-- **coverage**, to measure test coverage.
+- **coverage** 7.6 or later, to measure test coverage.
 - **pyright** (with its bundled Node.js) and **mobase-stubs 2.5.2**, for static type checking.
 
 The plugin itself has no other dependencies.
@@ -69,7 +69,7 @@ Every production module is at 100% line and branch coverage. Keep it there:
 .venv\Scripts\python -m coverage report -m
 ```
 
-The `Missing` column lists uncovered lines and branches. Run `.venv\Scripts\python -m coverage html` for a browsable report in `htmlcov\`.
+`.coveragerc` excludes a `case _:` arm that only calls `assert_never`, which ends an exhaustive `match`: pyright proves it unreachable. The `Missing` column lists uncovered lines and branches. Run `.venv\Scripts\python -m coverage html` for a browsable report in `htmlcov\`.
 
 ### Type checking
 

@@ -3,31 +3,48 @@ import unittest
 from dataclasses import replace
 
 from nexus_auto_updater.app.scan import ScanFailed, StopReason
-from nexus_auto_updater.app.session import EntryStatus, Phase, UpdateEntry
+from nexus_auto_updater.app.session import (
+    DownloadFailed,
+    Downloaded,
+    Downloading,
+    Idle,
+    InstallCancelled,
+    Installed,
+    InstalledFile,
+    Offered,
+    Queued,
+    ScanError,
+    Skipped,
+    Unresolved,
+    UpdateEntry,
+    UpToDate,
+)
 from nexus_auto_updater.domain.files import FileCategory, ModFile
 from nexus_auto_updater.ui import text
 
 COLOR = re.compile(r"^#[0-9a-f]{6}$")
-ENTRY = UpdateEntry(1, "SkyUI", 12604, "5.1", "5.2SE", 1, None, None, EntryStatus.READY, "why")
+INSTALLED = InstalledFile(1, None)
+READY = Offered(INSTALLED, ModFile(2), False, "why")
+FINDINGS = {
+    "Ready": READY,
+    "Needs review": Offered(INSTALLED, ModFile(2), True, "why"),
+    "Up to date": UpToDate(INSTALLED, "why"),
+    "Unresolved": Unresolved(INSTALLED, "why"),
+    "Skipped": Skipped("why"),
+    "Error": ScanError("why"),
+}
+STARTED = {
+    "Queued": Queued(),
+    "Downloading": Downloading(),
+    "Downloaded": Downloaded("a.7z"),
+    "Download failed": DownloadFailed(),
+    "Installed": Installed("a.7z"),
+    "Install cancelled": InstallCancelled("a.7z"),
+}
+ENTRY = UpdateEntry(1, "SkyUI", 12604, "5.1", "5.2SE", READY)
 
 
 class TablesTest(unittest.TestCase):
-    def test_every_status_has_text_and_colour(self):
-        for status in EntryStatus:
-            with self.subTest(status=status):
-                self.assertTrue(text.STATUS_TEXT[status])
-                self.assertRegex(text.STATUS_COLORS[status], COLOR)
-
-    def test_every_non_idle_phase_has_text_and_colour(self):
-        for phase in Phase:
-            with self.subTest(phase=phase):
-                if phase is Phase.IDLE:
-                    self.assertNotIn(phase, text.PHASE_TEXT)
-                    self.assertNotIn(phase, text.PHASE_COLORS)
-                else:
-                    self.assertTrue(text.PHASE_TEXT[phase])
-                    self.assertRegex(text.PHASE_COLORS[phase], COLOR)
-
     def test_lock_strings(self):
         self.assertEqual("\U0001F512", text.LOCK_HEADER)
         self.assertIn("Lock", text.LOCK_TOOLTIP)
@@ -35,17 +52,36 @@ class TablesTest(unittest.TestCase):
 
 
 class EntryTextTest(unittest.TestCase):
-    def test_idle_shows_the_status(self):
-        for status in EntryStatus:
-            entry = replace(ENTRY, status=status)
-            self.assertEqual(text.STATUS_TEXT[status], text.status_text(entry))
-            self.assertEqual(text.STATUS_COLORS[status], text.status_color(entry))
+    def test_idle_shows_the_finding(self):
+        for label, finding in FINDINGS.items():
+            with self.subTest(label):
+                entry = replace(ENTRY, finding=finding)
+                self.assertEqual(label, text.status_text(entry))
+                self.assertRegex(text.status_color(entry), COLOR)
+                self.assertEqual(label, text.finding_label(finding))
+                self.assertEqual("why", text.finding_detail(finding))
 
-    def test_phase_overrides_the_status(self):
-        entry = replace(ENTRY, phase=Phase.DOWNLOAD_FAILED)
-        self.assertEqual("Download failed", text.status_text(entry))
-        self.assertEqual("#e74c3c", text.status_color(entry))
-        self.assertEqual("Queued", text.status_text(replace(ENTRY, phase=Phase.QUEUED)))
+    def test_scan_summary_labels_cover_every_finding(self):
+        self.assertEqual(set(FINDINGS), set(text.FINDING_LABELS))
+
+    def test_started_update_overrides_the_finding(self):
+        for label, progress in STARTED.items():
+            with self.subTest(label):
+                entry = replace(ENTRY, progress=progress)
+                self.assertEqual(label, text.status_text(entry))
+                self.assertRegex(text.status_color(entry), COLOR)
+        self.assertEqual("#e74c3c", text.status_color(replace(ENTRY, progress=DownloadFailed())))
+
+    def test_archive_is_known_once_downloaded(self):
+        self.assertIsNone(text.archive_of(Idle()))
+        self.assertIsNone(text.archive_of(Queued()))
+        self.assertIsNone(text.archive_of(Downloading()))
+        self.assertIsNone(text.archive_of(DownloadFailed()))
+        for progress in (Downloaded("a.7z"), Installed("a.7z"), InstallCancelled("a.7z")):
+            self.assertEqual("a.7z", text.archive_of(progress))
+
+    def test_error_detail_is_its_message(self):
+        self.assertEqual("HTTP 404", text.finding_detail(ScanError("HTTP 404")))
 
     def test_mod_tooltip(self):
         self.assertEqual("Nexus mod 12604\nMO2 version: 5.1\nMO2 newest version: 5.2SE", text.mod_tooltip(ENTRY))

@@ -5,7 +5,13 @@ from dataclasses import replace
 from unittest import mock
 
 from nexus_auto_updater.app.ports import SourceError, SourceUnavailable
-from nexus_auto_updater.app.session import EntryStatus, UpdateEntry
+from nexus_auto_updater.app.session import (
+    InstalledFile,
+    Offered,
+    Skipped,
+    UpdateEntry,
+    Unresolved,
+)
 from nexus_auto_updater.domain.files import FileCategory, ModFile
 from tests import HAS_QT, QtTestCase, wait_until
 from tests.fakes import T0, Gate
@@ -40,10 +46,17 @@ class FakeModNotes:
         return result
 
 
-def entry(mod_id=1, *, status=EntryStatus.READY, **kwargs) -> UpdateEntry:
+def entry(mod_id=1, *, finding=None, installed=None, target=None, newer_files=(), **kwargs) -> UpdateEntry:
+    if finding is None:
+        installed_file = InstalledFile(None, installed, newer_files)
+        finding = (
+            Offered(installed_file, target, False, "why")
+            if target is not None
+            else Unresolved(installed_file, "why")
+        )
     defaults = dict(
         key=mod_id, mod_name=f"Mod {mod_id}", mod_id=mod_id, version="1", newest_version="2",
-        installed_file_id=None, installed=None, target=None, status=status, reason="why",
+        finding=finding,
     )
     defaults.update(kwargs)
     return UpdateEntry(**defaults)
@@ -211,7 +224,7 @@ class NotesPaneTest(QtTestCase):
         self.assertEqual([1, 2], self.notes.calls)
 
     def test_skipped_entries_make_no_request(self):
-        skipped = entry(5, status=EntryStatus.SKIPPED, mod_name="<LE> Mod", reason="Other <game>")
+        skipped = entry(5, finding=Skipped("Other <game>"), mod_name="<LE> Mod")
         self.pane.show_entry(skipped)
         wait_until(lambda: True)
         self.assertEqual([], self.notes.calls)

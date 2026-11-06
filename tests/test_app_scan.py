@@ -8,7 +8,10 @@ from nexus_auto_updater.app.ports import (
 )
 from nexus_auto_updater.app.scan import (
     MAX_CONSECUTIVE_UNAVAILABLE,
+    ModChecked,
+    ModErrored,
     ModScanned,
+    ModSkipped,
     ScanFailed,
     ScanPlan,
     ScanProgress,
@@ -44,7 +47,7 @@ class PlanShapeTest(unittest.TestCase):
         events = run(plan)
         self.assertEqual(ModScanned, type(events[0]))
         self.assertEqual(blocked, events[0].scan.mod)
-        self.assertEqual("Other game", events[0].scan.skipped_reason)
+        self.assertEqual(ModSkipped(blocked, "Other game"), events[0].scan)
         self.assertEqual([(GAME, 1), (GAME, 2)], source.list_calls)
 
     def test_is_empty(self):
@@ -94,15 +97,15 @@ class SelectionsTest(unittest.TestCase):
         matchers = {2: matcher_target, 1: FakeMatcher("installed"), 3: FakeMatcher("old")}
         mods = [installed_mod(1, (1, 3))]
         (scan,) = scanned(run(ScanPlan(FakeSource({1: listing(*files, matchers=matchers)}), GAME, mods)))
+        assert isinstance(scan, ModChecked)
         self.assertEqual([Verdict.READY, Verdict.READY], [s.verdict for s in scan.selections])
         self.assertEqual([2, 4], [s.target.file_id for s in scan.selections])
         # Target 4 has no matcher; non-targets' matchers are dropped.
         self.assertEqual({2: matcher_target}, dict(scan.target_matchers))
-        self.assertEqual("", scan.error)
-        self.assertEqual("", scan.skipped_reason)
 
     def test_no_target_no_matchers(self):
         (scan,) = scanned(run(ScanPlan(FakeSource({1: UP_TO_DATE}), GAME, [installed_mod(1)])))
+        assert isinstance(scan, ModChecked)
         self.assertIs(Verdict.UP_TO_DATE, scan.selections[0].verdict)
         self.assertEqual({}, dict(scan.target_matchers))
 
@@ -112,9 +115,8 @@ class ErrorsTest(unittest.TestCase):
         source = FakeSource({1: SourceError("mod hidden"), 2: UP_TO_DATE})
         events = run(ScanPlan(source, GAME, [installed_mod(1), installed_mod(2)]))
         scans = scanned(events)
-        self.assertEqual("mod hidden", scans[0].error)
-        self.assertEqual((), scans[0].selections)
-        self.assertEqual("", scans[1].error)
+        self.assertEqual(ModErrored(installed_mod(1), "mod hidden"), scans[0])
+        self.assertIsInstance(scans[1], ModChecked)
         self.assertFalse(any(isinstance(e, ScanFailed) for e in events))
 
     def test_first_incompatible_stops_the_scan(self):
@@ -136,7 +138,8 @@ class ErrorsTest(unittest.TestCase):
                              4: SourceUnavailable("c")})
         events = run(ScanPlan(source, GAME, mods))
         self.assertEqual(ScanFailed(StopReason.UNAVAILABLE, "c", 2), events[-1])
-        self.assertEqual(["", "a", "b", "c"], [s.error for s in scanned(events)])
+        self.assertIsInstance(scanned(events)[0], ModChecked)
+        self.assertEqual(["a", "b", "c"], [s.message for s in scanned(events)[1:] if isinstance(s, ModErrored)])
         self.assertEqual([1, 2, 3, 4], [m for _, m in source.list_calls])
 
     def test_unavailable_on_the_last_mods_leaves_none_unchecked(self):

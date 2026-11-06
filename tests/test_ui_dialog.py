@@ -3,8 +3,8 @@ from unittest import mock
 
 from nexus_auto_updater.app.notes import ModNotes
 from nexus_auto_updater.app.ports import FileListing, SourceError, SourceIncompatible
-from nexus_auto_updater.app.scan import ModScan, ScanPlan
-from nexus_auto_updater.app.session import EntryStatus, Phase, UpdateSession
+from nexus_auto_updater.app.scan import ModChecked, ScanPlan
+from nexus_auto_updater.app.session import Installed, Offered, UpdateSession
 from nexus_auto_updater.domain.selection import select_successor
 from nexus_auto_updater.tracking.tracker import DownloadTracker
 from tests import HAS_QT, QtTestCase, wait_until
@@ -319,7 +319,7 @@ class DownloadTest(DialogTestCase):
     def test_entries_outside_the_table_are_ignored(self):
         self.open_scanned()
         selection = select_successor(1, [mod_file(1), mod_file(2)])
-        (entry,) = self.session.record_scan(ModScan(installed_mod(9, (1,)), (selection,)))
+        (entry,) = self.session.record_scan(ModChecked(installed_mod(9, (1,)), (selection,)))
         rows, summary = self.table.rowCount(), self.summary()
         self.session.download(entry.key)  # Notifies the dialog about an entry it never showed.
         self.assertEqual([(9, 2)], self.downloader.calls)
@@ -503,5 +503,6 @@ class EndToEndTest(DialogTestCase):
             dialog._install_button.click()
         self.assertEqual([(path, "SkyUI")], self.installer.calls)
         self.assertEqual("Installed", self.status("SkyUI"))
-        self.assertEqual(EntryStatus.READY, self.session.entries()[0].status)
-        self.assertEqual(Phase.INSTALLED, self.session.entries()[0].phase)
+        (installed,) = self.session.entries()
+        self.assertIsInstance(installed.finding, Offered)
+        self.assertEqual(Installed(path), installed.progress)

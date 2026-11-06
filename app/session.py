@@ -1,81 +1,142 @@
 """State of one updater session: what can be updated and how far each update got."""
 
-from collections import deque
 from dataclasses import dataclass, replace
-from enum import Enum
 from itertools import count
-from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union, assert_never
 
 from ..domain.files import ModFile
 from ..domain.requirements import DependencyGraph
-from ..domain.selection import Verdict
+from ..domain.selection import Selection, Verdict
 from ..tracking.tracker import DownloadTracker, Ticket
-from .ports import ArchiveMatcher, Downloader, Installer, ModLocks
-from .scan import ModScan
+from .ports import ArchiveMatcher, Downloader, InstalledMod, Installer, ModLocks
+from .scan import ModChecked, ModErrored, ModScan, ModSkipped
 
 EntryKey = int
 
 
-class EntryStatus(Enum):
-    READY = "ready"
-    REVIEW = "review"
-    UP_TO_DATE = "up_to_date"
-    UNRESOLVED = "unresolved"
-    SKIPPED = "skipped"
-    ERROR = "error"
+@dataclass(frozen=True)
+class InstalledFile:
+    """The installed file as far as the source knows it."""
+
+    file_id: Optional[int]
+    file: Optional[ModFile]
+    # Files that may supersede the installed one, newest first.
+    newer_files: Tuple[ModFile, ...] = ()
 
 
-class Phase(Enum):
-    IDLE = "idle"
-    QUEUED = "queued"
-    DOWNLOADING = "downloading"
-    DOWNLOADED = "downloaded"
-    DOWNLOAD_FAILED = "download_failed"
-    INSTALLED = "installed"
-    INSTALL_CANCELLED = "install_cancelled"
+@dataclass(frozen=True)
+class Skipped:
+    """The mod can't be updated through the source."""
+
+    reason: str
 
 
-_VERDICT_STATUS = {
-    Verdict.READY: EntryStatus.READY,
-    Verdict.REVIEW: EntryStatus.REVIEW,
-    Verdict.UP_TO_DATE: EntryStatus.UP_TO_DATE,
-    Verdict.UNRESOLVED: EntryStatus.UNRESOLVED,
-}
-_OFFERED = (EntryStatus.READY, EntryStatus.REVIEW)
+@dataclass(frozen=True)
+class ScanError:
+    message: str
+
+
+@dataclass(frozen=True)
+class UpToDate:
+    installed: InstalledFile
+    reason: str
+
+
+@dataclass(frozen=True)
+class Unresolved:
+    installed: InstalledFile
+    reason: str
+
+
+@dataclass(frozen=True)
+class Offered:
+    installed: InstalledFile
+    target: ModFile
+    needs_review: bool
+    reason: str
+
+
+Finding = Union[Skipped, ScanError, UpToDate, Unresolved, Offered]
+
+
+@dataclass(frozen=True)
+class Idle:
+    pass
+
+
+@dataclass(frozen=True)
+class Queued:
+    pass
+
+
+@dataclass(frozen=True)
+class Downloading:
+    pass
+
+
+@dataclass(frozen=True)
+class DownloadFailed:
+    pass
+
+
+@dataclass(frozen=True)
+class Downloaded:
+    archive: str
+
+
+@dataclass(frozen=True)
+class Installed:
+    archive: str
+
+
+@dataclass(frozen=True)
+class InstallCancelled:
+    archive: str
+
+
+Progress = Union[
+    Idle, Queued, Downloading, DownloadFailed, Downloaded, Installed, InstallCancelled
+]
 
 
 @dataclass(frozen=True)
 class UpdateEntry:
-    """Read model of one installed file and its proposed update."""
+    """Read model of one installed file: what the scan found and how far its update got."""
 
     key: EntryKey
     mod_name: str
     mod_id: int
     version: str
     newest_version: str
-    installed_file_id: Optional[int]
-    installed: Optional[ModFile]
-    target: Optional[ModFile]
-    status: EntryStatus
-    reason: str
-    phase: Phase = Phase.IDLE
-    archive_path: str = ""
+    finding: Finding
+    progress: Progress = Idle()
     locked: bool = False
-    # Files that may supersede the installed one, newest first.
-    newer_files: Tuple[ModFile, ...] = ()
 
-    @property
-    def can_download(self) -> bool:
-        return (
-            not self.locked
-            and self.target is not None
-            and self.status in _OFFERED
-            and self.phase in (Phase.IDLE, Phase.DOWNLOAD_FAILED)
-        )
 
-    @property
-    def can_install(self) -> bool:
-        return not self.locked and self.phase is Phase.DOWNLOADED and bool(self.archive_path)
+def installed_of(finding: Finding) -> Optional[InstalledFile]:
+    match finding:
+        case Skipped() | ScanError():
+            return None
+        case UpToDate(installed=installed) | Unresolved(installed=installed):
+            return installed
+        case Offered(installed=installed):
+            return installed
+        case _:
+            assert_never(finding)
+
+
+def downloadable(entry: UpdateEntry) -> Optional[Offered]:
+    """The offer, if the entry can be downloaded now."""
+    if entry.locked or not isinstance(entry.progress, (Idle, DownloadFailed)):
+        return None
+    return entry.finding if isinstance(entry.finding, Offered) else None
+
+
+def installable(entry: UpdateEntry) -> Optional[Downloaded]:
+    """The downloaded archive, if the entry can be installed now."""
+    if entry.locked or not isinstance(entry.progress, Downloaded):
+        return None
+    return entry.progress
 
 
 EntryListener = Callable[[UpdateEntry], None]
@@ -95,7 +156,8 @@ class UpdateSession:
         self._tracker = tracker
         self._locks = locks
         self._max_downloads = max_concurrent_downloads
-        self._queue: Deque[EntryKey] = deque()
+        # Insertion order is the order downloads start in.
+        self._queue: Dict[EntryKey, ModFile] = {}
         self._entries: Dict[EntryKey, UpdateEntry] = {}
         self._matchers: Dict[EntryKey, ArchiveMatcher] = {}
         self._awaiting: Dict[Ticket, EntryKey] = {}
@@ -121,55 +183,32 @@ class UpdateSession:
 
     def record_scan(self, scan: ModScan) -> List[UpdateEntry]:
         """Turn a mod's scan outcome into new entries."""
-        mod = scan.mod
-        common: Dict[str, Any] = dict(
-            mod_name=mod.name,
-            mod_id=mod.mod_id,
-            version=mod.version,
-            newest_version=mod.newest_version,
-            locked=self._locks.is_locked(mod.mod_id),
-        )
-        if scan.skipped_reason or scan.error:
-            status = EntryStatus.SKIPPED if scan.skipped_reason else EntryStatus.ERROR
-            return [
-                self._add(
-                    UpdateEntry(
-                        key=next(self._keys),
-                        installed_file_id=None,
-                        installed=None,
-                        target=None,
-                        status=status,
-                        reason=scan.skipped_reason or scan.error,
-                        **common,
-                    ),
-                    None,
-                )
-            ]
-
-        added: List[UpdateEntry] = []
-        for selection in scan.selections:
-            target = selection.target
-            entry = UpdateEntry(
-                key=next(self._keys),
-                installed_file_id=selection.installed_file_id,
-                installed=selection.installed,
-                target=target,
-                status=_VERDICT_STATUS[selection.verdict],
-                reason=selection.reason,
-                newer_files=selection.newer_files,
-                **common,
-            )
-            matcher = scan.target_matchers.get(target.file_id) if target else None
-            added.append(self._add(entry, matcher))
-        return added
+        match scan:
+            case ModSkipped(mod=mod, reason=reason):
+                return [self._add(mod, Skipped(reason), None)]
+            case ModErrored(mod=mod, message=message):
+                return [self._add(mod, ScanError(message), None)]
+            case ModChecked(mod=mod, selections=selections, target_matchers=matchers):
+                added: List[UpdateEntry] = []
+                for selection in selections:
+                    finding = _finding(selection)
+                    matcher = (
+                        matchers.get(finding.target.file_id)
+                        if isinstance(finding, Offered)
+                        else None
+                    )
+                    added.append(self._add(mod, finding, matcher))
+                return added
+            case _:
+                assert_never(scan)
 
     def download(self, key: EntryKey) -> None:
         """Queue a download; it starts once fewer than the maximum are in flight."""
-        entry = self._entries[key]
-        if not entry.can_download:
+        offer = downloadable(self._entries[key])
+        if offer is None:
             return
-        self._queue.append(key)
-        self._update(key, phase=Phase.QUEUED, archive_path="")
+        self._queue[key] = offer.target
+        self._update(key, progress=Queued())
         self._start_queued()
 
     def set_locked(self, mod_id: int, locked: bool) -> None:
@@ -183,17 +222,19 @@ class UpdateSession:
             if entry.mod_id != mod_id or entry.locked == locked:
                 continue
             changes: Dict[str, Any] = dict(locked=locked)
-            if locked and entry.phase is Phase.QUEUED:
-                self._queue.remove(key)
-                changes["phase"] = Phase.IDLE
+            if locked and isinstance(entry.progress, Queued):
+                del self._queue[key]
+                changes["progress"] = Idle()
             self._update(key, **changes)
 
     def install(self, key: EntryKey) -> None:
         entry = self._entries[key]
-        if not entry.can_install:
+        download = installable(entry)
+        if download is None:
             return
-        installed = self._installer.install_archive(entry.archive_path, entry.mod_name)
-        self._update(key, phase=Phase.INSTALLED if installed else Phase.INSTALL_CANCELLED)
+        installed = self._installer.install_archive(download.archive, entry.mod_name)
+        progress = Installed(download.archive) if installed else InstallCancelled(download.archive)
+        self._update(key, progress=progress)
 
     def close(self) -> None:
         """Stop tracking this session's downloads; the tracker outlives the session."""
@@ -206,10 +247,9 @@ class UpdateSession:
 
     def _start_queued(self) -> None:
         while self._queue and len(self._awaiting) < self._max_downloads:
-            key = self._queue.popleft()
+            key = next(iter(self._queue))
+            target = self._queue.pop(key)
             entry = self._entries[key]
-            target = entry.target
-            assert target is not None  # Guaranteed by can_download when queued.
             # Archive-name matching is only a fallback to the host's metadata, so a
             # source that offers none still works.
             matcher = self._matchers.get(key)
@@ -219,10 +259,21 @@ class UpdateSession:
                 matcher.matches if matcher is not None else _never,
             )
             self._awaiting[ticket] = key
-            self._update(key, phase=Phase.DOWNLOADING)
+            self._update(key, progress=Downloading())
             self._downloader.start_download(entry.mod_id, target.file_id)
 
-    def _add(self, entry: UpdateEntry, matcher: Optional[ArchiveMatcher]) -> UpdateEntry:
+    def _add(
+        self, mod: InstalledMod, finding: Finding, matcher: Optional[ArchiveMatcher]
+    ) -> UpdateEntry:
+        entry = UpdateEntry(
+            key=next(self._keys),
+            mod_name=mod.name,
+            mod_id=mod.mod_id,
+            version=mod.version,
+            newest_version=mod.newest_version,
+            finding=finding,
+            locked=self._locks.is_locked(mod.mod_id),
+        )
         self._entries[entry.key] = entry
         if matcher is not None:
             self._matchers[entry.key] = matcher
@@ -239,10 +290,28 @@ class UpdateSession:
         if key is None:
             return
         if succeeded:
-            self._update(key, phase=Phase.DOWNLOADED, archive_path=archive_path)
+            self._update(key, progress=Downloaded(archive_path))
         else:
-            self._update(key, phase=Phase.DOWNLOAD_FAILED)
+            self._update(key, progress=DownloadFailed())
         self._start_queued()
+
+
+def _finding(selection: Selection) -> Finding:
+    installed = InstalledFile(
+        selection.installed_file_id, selection.installed, selection.newer_files
+    )
+    match selection.verdict:
+        case Verdict.READY | Verdict.REVIEW:
+            assert selection.target is not None  # The domain only offers a file it chose.
+            return Offered(
+                installed, selection.target, selection.verdict is Verdict.REVIEW, selection.reason
+            )
+        case Verdict.UP_TO_DATE:
+            return UpToDate(installed, selection.reason)
+        case Verdict.UNRESOLVED:
+            return Unresolved(installed, selection.reason)
+        case _:
+            assert_never(selection.verdict)
 
 
 def _never(_file_name: str) -> bool:

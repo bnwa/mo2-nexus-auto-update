@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import QTextBrowser
 
 from ..app.notes import ModNotes
 from ..app.ports import SourceError
-from ..app.session import EntryStatus, UpdateEntry
+from ..app.session import Offered, Skipped, UpdateEntry, installed_of
 from ..domain.files import ModFile
 from . import text
 
@@ -33,7 +33,7 @@ class NotesPane(QTextBrowser):
 
     def show_entry(self, entry: Optional[UpdateEntry]) -> None:
         self._entry = entry
-        if entry is not None and entry.status is not EntryStatus.SKIPPED:
+        if entry is not None and not isinstance(entry.finding, Skipped):
             if self._pages.get(entry.mod_id, ("", ""))[1]:
                 del self._pages[entry.mod_id]
             if entry.mod_id not in self._pages:
@@ -74,21 +74,22 @@ class NotesPane(QTextBrowser):
             self.clear()
             return
         parts = [f"<h3>{html.escape(entry.mod_name)}</h3>"]
-        if entry.status is EntryStatus.SKIPPED:
-            parts.append(f"<p>{html.escape(entry.reason)}</p>")
+        if isinstance(entry.finding, Skipped):
+            parts.append(f"<p>{html.escape(entry.finding.reason)}</p>")
             self.setHtml("".join(parts))
             return
 
         url = html.escape(self._notes.page_url(entry.mod_id))
         parts.append(f'<p><a href="{url}">Open the mod page on Nexus</a></p>')
-        if entry.newer_files:
+        installed = installed_of(entry.finding)
+        if installed is not None and installed.newer_files:
             parts.append("<h4>Newer files</h4>")
-            target_id = entry.target.file_id if entry.target else None
-            for mod_file in entry.newer_files:
+            target_id = entry.finding.target.file_id if isinstance(entry.finding, Offered) else None
+            for mod_file in installed.newer_files:
                 parts.append(_file_html(mod_file, mod_file.file_id == target_id))
-        if entry.installed is not None:
+        if installed is not None and installed.file is not None:
             parts.append("<h4>Installed file</h4>")
-            parts.append(_file_html(entry.installed, False))
+            parts.append(_file_html(installed.file, False))
 
         parts.append("<h4>Mod page</h4>")
         page = self._pages.get(entry.mod_id)

@@ -1,0 +1,4 @@
+[report]
+# Exhaustiveness guards are checked by pyright and unreachable at runtime.
+exclude_also =
+    case _:\n\s*assert_never\(

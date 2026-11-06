@@ -20,7 +20,19 @@ from PyQt6.QtWidgets import (
 
 from ..app.notes import ModNotes
 from ..app.scan import ModScanned, ScanFailed, ScanPlan, ScanProgress
-from ..app.session import EntryKey, EntryStatus, Phase, UpdateEntry, UpdateSession
+from ..app.session import (
+    DownloadFailed,
+    Downloading,
+    EntryKey,
+    Offered,
+    Queued,
+    UpdateEntry,
+    UpdateSession,
+    UpToDate,
+    downloadable,
+    installable,
+    installed_of,
+)
 from . import text
 from .header import CenteredCheckDelegate, CheckableHeader
 from .notes import NotesPane
@@ -158,14 +170,12 @@ class UpdaterDialog(QDialog):
         self._update_buttons()
         if self._scan_failed:
             return  # Keep the error message visible.
-        counts = {status: 0 for status in EntryStatus}
+        counts = {label: 0 for label in text.FINDING_LABELS}
         for entry in self._entries.values():
-            counts[entry.status] += 1
+            counts[text.finding_label(entry.finding)] += 1
         self._summary.setText(
             "Scan complete — "
-            + ", ".join(
-                f"{text.STATUS_TEXT[status]}: {count}" for status, count in counts.items() if count
-            )
+            + ", ".join(f"{label}: {count}" for label, count in counts.items() if count)
             + ". Rows marked 'Needs review' are unchecked; verify before downloading."
         )
 
@@ -181,7 +191,7 @@ class UpdaterDialog(QDialog):
         self._table.setRowHidden(index, self._hidden(entry))
 
     def _hidden(self, entry: UpdateEntry) -> bool:
-        return self._hide_current.isChecked() and entry.status is EntryStatus.UP_TO_DATE
+        return self._hide_current.isChecked() and isinstance(entry.finding, UpToDate)
 
     def _render(self, index: int, initial: bool = False) -> None:
         self._bulk_check = True
@@ -199,13 +209,14 @@ class UpdaterDialog(QDialog):
             check = QTableWidgetItem()
             self._table.setItem(index, COL_CHECK, check)
         flags = Qt.ItemFlag.ItemIsEnabled
-        if entry.can_download:
+        if downloadable(entry) is not None:
             flags |= Qt.ItemFlag.ItemIsUserCheckable
         check.setFlags(flags)
         if initial:
-            ready = entry.status is EntryStatus.READY and entry.can_download
+            offer = downloadable(entry)
+            ready = offer is not None and not offer.needs_review
             check.setCheckState(Qt.CheckState.Checked if ready else Qt.CheckState.Unchecked)
-        elif not entry.can_download:
+        elif downloadable(entry) is None:
             check.setCheckState(Qt.CheckState.Unchecked)
 
         lock = self._table.item(index, COL_LOCK)
@@ -220,21 +231,28 @@ class UpdaterDialog(QDialog):
         mod_item.setToolTip(text.mod_tooltip(entry))
         self._table.setItem(index, COL_MOD, mod_item)
 
-        installed_item = QTableWidgetItem(text.file_label(entry.installed, entry.installed_file_id))
-        installed_item.setToolTip(text.file_tooltip(entry.installed))
+        installed = installed_of(entry.finding)
+        installed_file = installed.file if installed else None
+        installed_item = QTableWidgetItem(
+            text.file_label(installed_file, installed.file_id if installed else None)
+        )
+        installed_item.setToolTip(text.file_tooltip(installed_file))
         self._table.setItem(index, COL_INSTALLED, installed_item)
 
-        target_item = QTableWidgetItem(text.file_label(entry.target))
-        target_item.setToolTip(text.file_tooltip(entry.target))
+        target = entry.finding.target if isinstance(entry.finding, Offered) else None
+        target_item = QTableWidgetItem(text.file_label(target))
+        target_item.setToolTip(text.file_tooltip(target))
         self._table.setItem(index, COL_TARGET, target_item)
 
         status_item = QTableWidgetItem(text.status_text(entry))
         self._table.setItem(index, COL_STATUS, status_item)
 
-        details = entry.reason
-        if entry.archive_path:
-            details += f"\nArchive: {entry.archive_path}"
-        details_item = QTableWidgetItem(entry.reason)
+        reason = text.finding_detail(entry.finding)
+        details = reason
+        archive = text.archive_of(entry.progress)
+        if archive:
+            details += f"\nArchive: {archive}"
+        details_item = QTableWidgetItem(reason)
         details_item.setToolTip(details)
         self._table.setItem(index, COL_DETAILS, details_item)
 
@@ -292,9 +310,9 @@ class UpdaterDialog(QDialog):
         # The progress bar is shared, so downloads wait for the scan to finish.
         entries = self._entries.values()
         self._download_button.setEnabled(
-            not self._scanning and any(e.can_download for e in entries)
+            not self._scanning and any(downloadable(e) for e in entries)
         )
-        self._install_button.setEnabled(any(e.can_install for e in entries))
+        self._install_button.setEnabled(any(installable(e) for e in entries))
 
     def _on_entry_changed(self, entry: UpdateEntry) -> None:
         index = self._row_of.get(entry.key)
@@ -310,8 +328,8 @@ class UpdaterDialog(QDialog):
         if not batch:
             return
         total = len(batch)
-        phases = [self._entries[key].phase for key in batch]
-        done = sum(1 for phase in phases if phase not in (Phase.QUEUED, Phase.DOWNLOADING))
+        progress = [self._entries[key].progress for key in batch]
+        done = sum(1 for step in progress if not isinstance(step, (Queued, Downloading)))
         if done < total:
             self._progress.setRange(0, total)
             self._progress.setValue(done)
@@ -319,7 +337,7 @@ class UpdaterDialog(QDialog):
             self._summary.setText(f"Downloading updates: {done}/{total} finished.")
             return
 
-        failed = sum(1 for phase in phases if phase is Phase.DOWNLOAD_FAILED)
+        failed = sum(1 for step in progress if isinstance(step, DownloadFailed))
         batch.clear()
         self._progress.setVisible(False)
         self._summary.setText(
@@ -334,7 +352,7 @@ class UpdaterDialog(QDialog):
             check = self._table.item(index, COL_CHECK)
             if check is None or check.checkState() != Qt.CheckState.Checked:
                 continue
-            if not self._entries[key].can_download:
+            if downloadable(self._entries[key]) is None:
                 continue
             # Add first: the session reports the QUEUED change synchronously.
             self._download_batch.add(key)
@@ -343,7 +361,7 @@ class UpdaterDialog(QDialog):
         self._update_download_progress()
 
     def _install_downloaded(self) -> None:
-        keys = [key for key in self._row_keys if self._entries[key].can_install]
+        keys = [key for key in self._row_keys if installable(self._entries[key])]
         if not keys:
             return
         answer = QMessageBox.question(

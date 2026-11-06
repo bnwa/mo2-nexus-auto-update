@@ -1,6 +1,7 @@
 """Check installed mods against the file source and choose their update targets."""
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Callable, Dict, Iterator, Mapping, Sequence, Tuple, Union
 
 from ..domain.selection import Selection, plan_updates
@@ -19,15 +20,30 @@ MAX_CONSECUTIVE_UNAVAILABLE = 3
 
 
 @dataclass(frozen=True)
-class ModScan:
-    """Outcome of checking one mod. Exactly one of the outcomes is populated."""
-
+class ModChecked:
     mod: InstalledMod
-    selections: Tuple[Selection, ...] = ()
+    selections: Tuple[Selection, ...]
     # Archive recognition for the selected targets, by file ID (may be partial).
     target_matchers: Mapping[int, ArchiveMatcher] = field(default_factory=lambda: {})
-    error: str = ""
-    skipped_reason: str = ""
+
+
+@dataclass(frozen=True)
+class ModSkipped:
+    """The mod can't be updated through the source at all."""
+
+    mod: InstalledMod
+    reason: str
+
+
+@dataclass(frozen=True)
+class ModErrored:
+    """The source couldn't answer for this mod."""
+
+    mod: InstalledMod
+    message: str
+
+
+ModScan = Union[ModChecked, ModSkipped, ModErrored]
 
 
 @dataclass(frozen=True)
@@ -42,7 +58,7 @@ class ModScanned:
     scan: ModScan
 
 
-class StopReason:
+class StopReason(Enum):
     INCOMPATIBLE = "incompatible"  # The source's contract changed; the plugin needs an update.
     UNAVAILABLE = "unavailable"  # The source keeps failing; try again later.
 
@@ -51,7 +67,7 @@ class StopReason:
 class ScanFailed:
     """The scan stopped early; mods not yet checked were left out."""
 
-    reason: str  # A StopReason value
+    reason: StopReason
     message: str
     unchecked: int
 
@@ -79,7 +95,7 @@ class ScanPlan:
 
     def run(self, should_stop: Callable[[], bool]) -> Iterator[ScanEvent]:
         for mod in self._blocked:
-            yield ModScanned(ModScan(mod, skipped_reason=mod.download_blocker))
+            yield ModScanned(ModSkipped(mod, mod.download_blocker))
 
         total = len(self._checkable)
         consecutive_unavailable = 0
@@ -95,14 +111,14 @@ class ScanPlan:
                 return
             except SourceUnavailable as exc:
                 consecutive_unavailable += 1
-                yield ModScanned(ModScan(mod, error=str(exc)))
+                yield ModScanned(ModErrored(mod, str(exc)))
                 if consecutive_unavailable >= MAX_CONSECUTIVE_UNAVAILABLE:
                     yield ScanFailed(StopReason.UNAVAILABLE, str(exc), total - index - 1)
                     return
                 continue
             except SourceError as exc:
                 consecutive_unavailable = 0
-                yield ModScanned(ModScan(mod, error=str(exc)))
+                yield ModScanned(ModErrored(mod, str(exc)))
                 continue
 
             consecutive_unavailable = 0
@@ -113,6 +129,6 @@ class ScanPlan:
                     matcher = listing.archive_matcher(selection.target.file_id)
                     if matcher is not None:
                         matchers[selection.target.file_id] = matcher
-            yield ModScanned(ModScan(mod, selections, matchers))
+            yield ModScanned(ModChecked(mod, selections, matchers))
         if total:
             yield ScanProgress(total, total, "")

@@ -94,8 +94,10 @@ It is pure Python: reading metadata (`read_archive_ids`) and scheduling retries 
 - `scan.py`: `ScanPlan` is a blocking, interruptible generator of events (`ScanProgress`, `ModScanned`, `ScanFailed`) suitable for running off the UI thread. It skips mods the host can't download for, applies the domain policy to each listing, and stops early:
   - at the first `SourceIncompatible` (every remaining request would fail the same way);
   - after 3 consecutive `SourceUnavailable` (the source is presumed down).
+
+  A mod's outcome is a closed union, `ModScan = ModChecked | ModSkipped | ModErrored`, and `StopReason` is an enum.
 - `notes.py`: `ModNotes` reads a mod's page URL and description (blocking, cached) for the notes pane.
-- `session.py`: `UpdateSession` owns the session's read model — one `UpdateEntry` per installed file, with `EntryStatus` (what the scan concluded) and `Phase` (download/install progress). It owns the mapping from tracker tickets to entries, starts downloads and installs through the ports, and notifies one subscriber when an entry changes. Downloads are queued (`Phase.QUEUED`) and started only while fewer than `max_concurrent_downloads` are in flight; each resolved download starts the next queued one. `close()` withdraws its expectations from the tracker, which outlives sessions. It also holds the session's `dependency_graph` (`None` until loaded). Entries of a Nexus mod the user locked (`set_locked`, persisted through `ModLocks`) keep their scan verdict but can't be downloaded or installed; locking dequeues queued downloads.
+- `session.py`: `UpdateSession` owns the session's read model — one `UpdateEntry` per installed file, with two independent closed unions: `Finding` (what the scan concluded: `Skipped`, `ScanError`, `UpToDate`, `Unresolved` or `Offered`) and `Progress` (`Idle`, `Queued`, `Downloading`, `DownloadFailed`, `Downloaded`, `Installed`, `InstallCancelled`), each variant carrying only the data valid in it. `downloadable(entry)` and `installable(entry)` parse an entry once into the state a download or install needs. It owns the mapping from tracker tickets to entries, starts downloads and installs through the ports, and notifies one subscriber when an entry changes. Downloads are queued (`Queued`) and started only while fewer than `max_concurrent_downloads` are in flight; each resolved download starts the next queued one. `close()` withdraws its expectations from the tracker, which outlives sessions. It also holds the session's `dependency_graph` (`None` until loaded). Entries of a Nexus mod the user locked (`set_locked`, persisted through `ModLocks`) keep their scan verdict but can't be downloaded or installed; locking dequeues queued downloads.
 
 ### `nexus/` — Nexus v2 adapter
 
@@ -126,7 +128,7 @@ It is pure Python: reading metadata (`read_archive_ids`) and scheduling retries 
 - `scan_worker.py`: runs `ScanPlan.run()` on a `QThread` and forwards events as a signal. Session calls happen on the GUI thread.
 - `header.py`: the select-all checkbox header.
 - `notes.py`: `NotesPane` shows the selected row's file descriptions, changelogs and mod page, fetching the page on a daemon thread. Author markup (BBCode mixed with HTML) is escaped and only links (http/https) and basic styles are rebuilt.
-- `text.py`: all display strings and colours for `EntryStatus`, `Phase`, files, and scan-stop reasons.
+- `text.py`: all display strings and colours for `Finding`, `Progress`, files, and scan-stop reasons, as exhaustive `match`es.
 
 ### `plugin.py` — composition root
 
