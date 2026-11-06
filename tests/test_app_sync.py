@@ -103,7 +103,7 @@ class ScanLifecycleTest(SyncTestCase):
         self.assertEqual(NotStarted(), status.scan)
         self.assertEqual(NoBatch(), status.batch)
         self.assertEqual(SelectAll.UNAVAILABLE, status.select_all)
-        self.assertEqual(0, status.installable_count)
+        self.assertEqual(frozenset(), status.installable)
         self.assertEqual((), self.sync.rows())
         self.assertEqual(0, self.runner.starts)
 
@@ -183,6 +183,10 @@ class RowsTest(SyncTestCase):
         self.runner.deliver(ModScanned(ModChecked(installed_mod(1), ())))
         self.assertEqual((), self.sync.rows())
         self.assertEqual([StatusChanged()], self.changes)
+
+    def test_rows_know_their_position(self):
+        keys = self.scanning((1, selection(1), selection(2)), (2, selection(3)))
+        self.assertEqual([0, 1, 2], [self.sync.row_of(k) for k in keys])
 
     def test_notifications(self):
         self.sync.start()
@@ -344,15 +348,25 @@ class InstallTest(SyncTestCase):
         self.sync.download_selected()
         paths = [self.finish_download(k) for k in (a, b, c)]
         self.sync.set_locked(3, True)
-        self.assertEqual(2, self.sync.status().installable_count)
-        self.sync.install_downloaded()
+        self.assertEqual(frozenset({a, b}), self.sync.status().installable)
+        self.sync.install_downloaded(self.sync.status().installable)
         self.assertEqual([(paths[0], "Mod 1"), (paths[1], "Mod 2")], self.installer.calls)
         self.assertEqual([Installed, Installed, Downloaded], self.progress(a, b, c))
         self.assertFalse(self.sync.status().can_install)
 
+    def test_only_the_given_entries_are_installed(self):
+        a, b = self.scanning((1, selection(1)), (2, selection(2)))
+        self.sync.download_selected()
+        self.finish_download(a)
+        shown = self.sync.status().installable
+        self.finish_download(b)  # Finishes while the user is being asked.
+        self.sync.install_downloaded(shown)
+        self.assertEqual([Installed, Downloaded], self.progress(a, b))
+        self.assertEqual(frozenset({b}), self.sync.status().installable)
+
     def test_nothing_to_install(self):
         self.scanning((1, selection(1)))
-        self.sync.install_downloaded()
+        self.sync.install_downloaded(frozenset())
         self.assertEqual([], self.installer.calls)
 
 
@@ -362,6 +376,12 @@ class CloseTest(SyncTestCase):
         self.sync.close()
         self.sync.close()
         self.assertTrue(self.runner.stopped)
+
+    def test_a_closed_sync_does_not_start(self):
+        self.sync.close()
+        self.sync.start()
+        self.assertEqual(0, self.runner.starts)
+        self.assertEqual(NotStarted(), self.sync.status().scan)
 
     def test_close_before_starting_and_after_nothing_to_scan(self):
         self.sync.close()

@@ -31,7 +31,7 @@ class CheckableHeaderTest(QtTestCase):
         QTest.mouseClick(self.header.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(x, self.header.height() // 2))
 
     def test_starts_unchecked_and_disabled(self):
-        self.assertEqual((False, False), (self.header._checked, self.header._enabled))
+        self.assertEqual((False, False), (self.header.checked, self.header.enabled))
         self.assertTrue(self.header.sectionsClickable())
         self.assertIs(Qt.Orientation.Horizontal, self.header.orientation())
 
@@ -57,10 +57,10 @@ class CheckableHeaderTest(QtTestCase):
 
     def test_set_state(self):
         self.header.set_state(True, True)
-        self.assertEqual((True, True), (self.header._checked, self.header._enabled))
+        self.assertEqual((True, True), (self.header.checked, self.header.enabled))
         self.header.set_state(True, True)  # Unchanged: no repaint needed.
         self.header.set_state(False, False)
-        self.assertEqual((False, False), (self.header._checked, self.header._enabled))
+        self.assertEqual((False, False), (self.header.checked, self.header.enabled))
 
     def test_painting_every_state(self):
         for checked, enabled in ((False, False), (True, True), (True, False), (False, True)):

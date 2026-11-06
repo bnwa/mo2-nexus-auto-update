@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QWidget
 from .app.notes import ModNotes
 from .app.scan import ScanPlan
 from .app.session import UpdateSession
+from .app.sync import Sync
 from .host.metadata import read_archive_ids
 from .host.mo2 import Mo2Host
 from .nexus.catalog import NexusV2FileSource
@@ -99,6 +100,7 @@ class NexusAutoUpdater(mobase.IPluginTool):
         if self._host is None or self._tracker is None:
             return
         from .ui.dialog import UpdaterDialog  # Deferred: keeps plugin load light.
+        from .ui.scan_worker import QtScanRunner
 
         self._connect_downloads()
         scan_all = bool(self._setting(SETTING_SCAN_ALL))
@@ -110,10 +112,11 @@ class NexusAutoUpdater(mobase.IPluginTool):
             self._host, self._host, self._tracker, self._host, self._max_concurrent_downloads()
         )
 
+        # Parented like the dialog: Qt must outlive display() if a scan request is still in flight.
+        sync = Sync(session, plan, QtScanRunner(self._parent_widget))
         dialog = UpdaterDialog(
             self._parent_widget,
-            plan,
-            session,
+            sync,
             ModNotes(source, game),
             scope_label="all Nexus mods" if scan_all else "mods MO2 flags as having an update",
             empty_message=(
@@ -124,7 +127,7 @@ class NexusAutoUpdater(mobase.IPluginTool):
         try:
             dialog.exec()
         finally:
-            session.close()
+            sync.close()
 
     # --- Helpers ---
 

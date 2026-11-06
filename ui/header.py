@@ -27,6 +27,14 @@ class CheckableHeader(QHeaderView):
         self._enabled = False
         self.setSectionsClickable(True)
 
+    @property
+    def checked(self) -> bool:
+        return self._checked
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
     def set_state(self, checked: bool, enabled: bool) -> None:
         if (checked, enabled) != (self._checked, self._enabled):
             self._checked, self._enabled = checked, enabled
@@ -129,7 +137,7 @@ class CenteredCheckDelegate(QStyledItemDelegate):
         new_state = (
             Qt.CheckState.Unchecked if state == Qt.CheckState.Checked else Qt.CheckState.Checked
         )
-        # As an int, like Qt's own delegate, so QTableWidgetItem.checkState() reads it.
+        # As an int, like Qt's own delegate.
         return model.setData(index, new_state.value, Qt.ItemDataRole.CheckStateRole)
 
     @staticmethod

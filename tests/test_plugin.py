@@ -17,15 +17,17 @@ if HAS_QT:
     from nexus_auto_updater.host.mo2 import Mo2Host
     from nexus_auto_updater.tracking.tracker import DownloadTracker
     from nexus_auto_updater.ui import dialog as dialog_module
+    from nexus_auto_updater.ui.scan_worker import QtScanRunner
 
 
 class FakeDialog:
     instances = []
 
-    def __init__(self, parent, plan, session, notes, *, scope_label, empty_message):
+    def __init__(self, parent, sync, notes, *, scope_label, empty_message):
         self.parent = parent
-        self.plan = plan
-        self.session = session
+        self.sync = sync
+        self.plan = sync._plan
+        self.session = sync._session
         self.notes = notes
         self.scope_label = scope_label
         self.empty_message = empty_message
@@ -81,10 +83,14 @@ class MetadataTest(PluginTestCase):
         self.assertTrue(all(s.description for s in self.plugin.settings()))
 
     def test_set_parent_widget(self):
-        parent = object()
+        from PyQt6.QtWidgets import QWidget
+
+        parent = QWidget()
+        self.addCleanup(parent.deleteLater)
         self.plugin.setParentWidget(parent)
         self.plugin.init(self.organizer)
         self.assertIs(parent, self.display().parent)
+        self.assertIsNotNone(parent.findChild(QtScanRunner))
 
 
 class InitTest(PluginTestCase):

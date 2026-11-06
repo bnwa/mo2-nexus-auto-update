@@ -177,7 +177,7 @@ class SyncStatus:
     scan: ScanState
     batch: BatchState
     select_all: SelectAll
-    installable_count: int
+    installable: FrozenSet[EntryKey]
 
     @property
     def can_download(self) -> bool:
@@ -185,7 +185,7 @@ class SyncStatus:
 
     @property
     def can_install(self) -> bool:
-        return self.installable_count > 0
+        return bool(self.installable)
 
 
 @dataclass(frozen=True)
@@ -214,6 +214,9 @@ class Sync:
         self._plan = plan
         self._runner = runner
         self._entries: Dict[EntryKey, UpdateEntry] = {}
+        self._rows: Tuple[EntryKey, ...] = ()
+        self._row_of: Dict[EntryKey, int] = {}
+        self._closed = False
         self._selected: FrozenSet[EntryKey] = frozenset()
         self._scan: ScanState = NotStarted()
         self._batch: BatchState = NoBatch()
@@ -231,7 +234,10 @@ class Sync:
         Append-only: a row is never reordered or removed, so a view can count the rows
         it has been told about with ``RowsAdded``.
         """
-        return tuple(self._entries)
+        return self._rows
+
+    def row_of(self, key: EntryKey) -> int:
+        return self._row_of[key]
 
     def entry(self, key: EntryKey) -> UpdateEntry:
         return self._entries[key]
@@ -251,14 +257,14 @@ class Sync:
             scan=self._scan,
             batch=self._batch,
             select_all=select_all,
-            installable_count=sum(1 for e in self._entries.values() if installable(e)),
+            installable=frozenset(key for key, e in self._entries.items() if installable(e)),
         )
 
     # --- Commands ---
 
     def start(self) -> None:
-        """Begin the scan; does nothing once started."""
-        if not isinstance(self._scan, NotStarted):
+        """Begin the scan; does nothing once started or closed."""
+        if self._closed or not isinstance(self._scan, NotStarted):
             return
         self._scan = scan_started(self._plan.is_empty, self._plan.total)
         self._emit(StatusChanged())
@@ -267,6 +273,7 @@ class Sync:
 
     def close(self) -> None:
         """Stop scanning and downloading. Safe to call more than once."""
+        self._closed = True
         self._runner.stop()
         self._session.close()
         self._listener = None
@@ -308,10 +315,15 @@ class Sync:
         if keys:
             self._emit(StatusChanged())
 
-    def install_downloaded(self) -> None:
-        # MO2's installer runs a nested event loop, so entries can change meanwhile.
-        for key in [key for key, entry in self._entries.items() if installable(entry)]:
-            self._session.install(key)
+    def install_downloaded(self, keys: FrozenSet[EntryKey]) -> None:
+        """Install the given entries, those of them still installable.
+
+        The caller passes the keys it showed the user: MO2's installer runs a nested
+        event loop, so other entries can become installable in the meantime.
+        """
+        for key in self._rows:
+            if key in keys:
+                self._session.install(key)
 
     # --- Events ---
 
@@ -320,6 +332,8 @@ class Sync:
             added = self._session.record_scan(event.scan)
             for entry in added:
                 self._entries[entry.key] = entry
+                self._row_of[entry.key] = len(self._rows)
+                self._rows += (entry.key,)
                 offer = downloadable(entry)
                 if offer is not None and not offer.needs_review:
                     self._selected = self._selected | {entry.key}

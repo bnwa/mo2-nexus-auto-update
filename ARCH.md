@@ -98,7 +98,7 @@ It is pure Python: reading metadata (`read_archive_ids`) and scheduling retries 
   A mod's outcome is a closed union, `ModScan = ModChecked | ModSkipped | ModErrored`, and `StopReason` is an enum.
 - `notes.py`: `ModNotes` reads a mod's page URL and description (blocking, cached) for the notes pane.
 - `session.py`: `UpdateSession` owns the session's read model — one `UpdateEntry` per installed file, with two independent closed unions: `Finding` (what the scan concluded: `Skipped`, `ScanError`, `UpToDate`, `Unresolved` or `Offered`) and `Progress` (`Idle`, `Queued`, `Downloading`, `DownloadFailed`, `Downloaded`, `Installed`, `InstallCancelled`), each variant carrying only the data valid in it. `downloadable(entry)` and `installable(entry)` parse an entry once into the state a download or install needs. It owns the mapping from tracker tickets to entries, starts downloads and installs through the ports, and notifies one subscriber when an entry changes. Downloads are queued (`Queued`) and started only while fewer than `max_concurrent_downloads` are in flight; each resolved download starts the next queued one. `close()` withdraws its expectations from the tracker, which outlives sessions. It also holds the session's `dependency_graph` (`None` until loaded). Entries of a Nexus mod the user locked (`set_locked`, persisted through `ModLocks`) keep their scan verdict but can't be downloaded or installed; locking dequeues queued downloads.
-- `sync.py`: `Sync` orchestrates one run on top of `UpdateSession`, so a view only renders snapshots and forwards input. It runs the scan through the `ScanRunner` port (defined here, not in `ports.py`, because it names `ScanPlan`, which already imports `ports`) and keeps four independent pieces of state, each moved by pure transition functions over closed unions: the scan lifecycle (`NotStarted`, `NothingToScan`, `Scanning`, `Stopped`, `Complete`), the download batch (`NoBatch`, `InProgress`, `Finished`), the selection (entries chosen for download, always a subset of the downloadable ones) and the entries. Late or out-of-order events never move a state backwards: a `Stopped` scan stays stopped when its runner finishes. Snapshots are `rows()` (append-only), `entry(key)`, `is_selected(key)` and `status()`; one subscriber is told about `RowsAdded`, `RowChanged` and `StatusChanged`. The `ScanRunner` contract: callbacks arrive on the thread that owns `Sync`, and none arrives after `stop()` returns.
+- `sync.py`: `Sync` orchestrates one run on top of `UpdateSession`, so a view only renders snapshots and forwards input. It runs the scan through the `ScanRunner` port (defined here, not in `ports.py`, because it names `ScanPlan`, which already imports `ports`) and keeps four independent pieces of state, each moved by pure transition functions over closed unions: the scan lifecycle (`NotStarted`, `NothingToScan`, `Scanning`, `Stopped`, `Complete`), the download batch (`NoBatch`, `InProgress`, `Finished`), the selection (entries chosen for download, always a subset of the downloadable ones) and the entries. Late or out-of-order events never move a state backwards: a `Stopped` scan stays stopped when its runner finishes. Snapshots are `rows()` (append-only; `row_of(key)` gives a key's position), `entry(key)`, `is_selected(key)` and `status()`, whose `installable` is the set of entries that can be installed now: `install_downloaded(keys)` installs only the keys the caller was showing the user, because the confirmation prompt runs a nested event loop. `start()` does nothing after `close()`. One subscriber is told about `RowsAdded`, `RowChanged` and `StatusChanged`. The `ScanRunner` contract: callbacks arrive on the thread that owns `Sync`, and none arrives after `stop()` returns.
 
 ### `nexus/` — Nexus v2 adapter
 
@@ -125,7 +125,8 @@ It is pure Python: reading metadata (`read_archive_ids`) and scheduling retries 
 
 ### `ui/` — presentation
 
-- `dialog.py`: `UpdaterDialog` receives a `ScanPlan`, an `UpdateSession` and two strings. It owns purely presentational state: which table row shows which entry key, the latest entry snapshots, which entries the progress bar is counting, and the checkbox selection.
+- `dialog.py`: `UpdaterDialog` receives a `Sync`, a `ModNotes` and two strings, and holds no application state. It is `Sync`'s one subscriber: it forwards row notifications to the table model and renders `Sync.status()` (scan text and progress bar, download batch, button enablement, the select-all header). While the plugin has one summary line and bar for both, the scan owns them until it ends and a download batch then takes them over; downloads are disabled while scanning. `done()` calls `Sync.close()`.
+- `table_model.py`: `UpdatesModel` (a `QAbstractTableModel`) shows `Sync`'s rows. It counts the rows it has been told about, so `rows()` growing never gets ahead of `beginInsertRows`; check and lock edits go through `setData` to `Sync`. `HideCurrentProxy` is the "Hide up-to-date" filter.
 - `scan_worker.py`: `ScanWorker` runs `ScanPlan.run()` on a `QThread` and forwards events as a signal; `QtScanRunner` implements `ScanRunner` over it, delivering callbacks on the GUI thread and dropping signals the worker queued before `stop()`. Session calls happen on the GUI thread.
 - `header.py`: the select-all checkbox header.
 - `notes.py`: `NotesPane` shows the selected row's file descriptions, changelogs and mod page, fetching the page on a daemon thread. Author markup (BBCode mixed with HTML) is escaped and only links (http/https) and basic styles are rebuilt.
@@ -133,7 +134,7 @@ It is pure Python: reading metadata (`read_archive_ids`) and scheduling retries 
 
 ### `plugin.py` — composition root
 
-Implements `mobase.IPluginTool`. It reads settings, creates the long-lived `Mo2Host` and `DownloadTracker` (MO2's download hooks cannot be unregistered, so they outlive dialogs), and per dialog creates the `NexusV2FileSource`, `ScanPlan` and `UpdateSession`. It closes the session when the dialog closes.
+Implements `mobase.IPluginTool`. It reads settings, creates the long-lived `Mo2Host` and `DownloadTracker` (MO2's download hooks cannot be unregistered, so they outlive dialogs), and per dialog creates the `NexusV2FileSource`, `ScanPlan`, `UpdateSession` and `Sync`. It builds a `Sync` around the session, the scan plan and a `QtScanRunner` (parented like the dialog, so Qt owns the scan thread beyond `display()`), and calls `Sync.close()` when the dialog closes.
 
 ## Runtime flows
 
@@ -142,22 +143,26 @@ Implements `mobase.IPluginTool`. It reads settings, creates the long-lived `Mo2H
 ```mermaid
 sequenceDiagram
     participant UI as ui.dialog
-    participant W as ui.scan_worker (thread)
+    participant Y as app.Sync
+    participant W as ui.QtScanRunner (thread)
     participant Scan as app.ScanPlan
     participant Src as nexus.NexusV2FileSource
     participant Dom as domain.plan_updates
     participant S as app.UpdateSession
-    UI->>W: start
+    UI->>Y: start
+    Y->>W: start(plan, on_event, on_finished)
     W->>Scan: run(should_stop)
     loop each mod
         Scan->>Src: list_files(game, mod_id)
         Src-->>Scan: FileListing or SourceError
         Scan->>Dom: plan_updates(installed ids, files)
         Scan-->>W: ModScanned / ScanProgress / ScanFailed
-        W-->>UI: event (signal, GUI thread)
-        UI->>S: record_scan(scan)
-        S-->>UI: new UpdateEntry list
+        W-->>Y: on_event (GUI thread)
+        Y->>S: record_scan(scan)
+        Y-->>UI: RowsAdded, StatusChanged
     end
+    W-->>Y: on_finished
+    Y-->>UI: StatusChanged (Complete)
 ```
 
 ### Download and install
@@ -165,23 +170,28 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant UI as ui.dialog
+    participant Y as app.Sync
     participant S as app.UpdateSession
     participant T as tracking.DownloadTracker
     participant H as host.Mo2Host
-    UI->>S: download(key)
-    S-->>UI: entry changed (QUEUED)
+    UI->>Y: download_selected()
+    Y->>S: download(key) for each selected key
+    S-->>Y: entry changed (Queued)
+    Y-->>UI: RowChanged, StatusChanged
     Note over S: starts queued entries while in flight < max_concurrent_downloads
     S->>T: expect(mod_id, file_id, matcher) -> ticket
-    S-->>UI: entry changed (DOWNLOADING)
+    S-->>Y: entry changed (Downloading)
     S->>H: start_download(mod_id, file_id)
     H-->>T: download_finished(archive_path, succeeded)
     T->>T: match: .meta file ID, archive name, unique mod ID, retry
     T-->>S: resolved(ticket, archive_path, succeeded)
-    S-->>UI: entry changed (DOWNLOADED / DOWNLOAD_FAILED)
+    S-->>Y: entry changed (Downloaded / DownloadFailed)
+    Y-->>UI: RowChanged, StatusChanged (batch Finished once all settle)
     Note over S: a freed slot starts the next queued entry
-    UI->>S: install(key)
+    UI->>Y: install_downloaded(keys shown to the user)
+    Y->>S: install(key)
     S->>H: install_archive(path, mod name)
-    S-->>UI: entry changed (INSTALLED / INSTALL_CANCELLED)
+    S-->>Y: entry changed (Installed / InstallCancelled)
 ```
 
 ## Designing for a beta API
@@ -207,7 +217,9 @@ sequenceDiagram
 | MO2 API usage | `host/mo2.py` |
 | Download-matching rules or timing | `tracking/tracker.py` |
 | When the scan gives up | `app/scan.py` (`MAX_CONSECUTIVE_UNAVAILABLE`) |
-| Wording, colours, table layout | `ui/text.py`, `ui/dialog.py` |
+| Wording, colours | `ui/text.py` |
+| Table columns and cell rendering | `ui/table_model.py` |
+| Dialog layout, summary and buttons | `ui/dialog.py` |
 | New setting | `plugin.py` (declare, read, pass the narrow value inward) |
 
 ## Testing approach

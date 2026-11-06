@@ -1,7 +1,7 @@
-from typing import Dict, List, Optional, Set
+from collections import Counter
+from typing import Optional, Tuple, assert_never
 
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QBrush, QColor
+from PyQt6.QtCore import QModelIndex, Qt, QTimer
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -13,86 +13,88 @@ from PyQt6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSplitter,
-    QTableWidget,
-    QTableWidgetItem,
+    QTableView,
     QVBoxLayout,
 )
 
 from ..app.notes import ModNotes
-from ..app.scan import ModScanned, ScanFailed, ScanPlan, ScanProgress
-from ..app.session import (
-    DownloadFailed,
-    Downloading,
-    EntryKey,
-    Offered,
-    Queued,
-    UpdateEntry,
-    UpdateSession,
-    UpToDate,
-    downloadable,
-    installable,
-    installed_of,
+from ..app.sync import (
+    Complete,
+    Finished,
+    InProgress,
+    NoBatch,
+    NothingToScan,
+    NotStarted,
+    RowChanged,
+    RowsAdded,
+    Scanning,
+    SelectAll,
+    Stopped,
+    StatusChanged,
+    Sync,
+    SyncChange,
+    SyncStatus,
 )
 from . import text
 from .header import CenteredCheckDelegate, CheckableHeader
 from .notes import NotesPane
-from .scan_worker import ScanWorker
 from .qt_types import present
-
-COL_CHECK, COL_LOCK, COL_MOD, COL_INSTALLED, COL_TARGET, COL_STATUS, COL_DETAILS = range(7)
-HEADERS = ["", text.LOCK_HEADER, "Mod", "Installed file", "Update to", "Status", "Details"]
+from .table_model import (
+    COL_CHECK,
+    COL_INSTALLED,
+    COL_LOCK,
+    COL_MOD,
+    COL_STATUS,
+    COL_TARGET,
+    HideCurrentProxy,
+    UpdatesModel,
+)
 
 
 class UpdaterDialog(QDialog):
     def __init__(
         self,
         parent,
-        plan: ScanPlan,
-        session: UpdateSession,
+        sync: Sync,
         notes: ModNotes,
         *,
         scope_label: str,
         empty_message: str,
     ):
         super().__init__(parent)
-        self._plan = plan
-        self._session = session
+        self._sync = sync
+        self._scope_label = scope_label
         self._empty_message = empty_message
-        self._worker: Optional[ScanWorker] = None
-        self._scanning = False
-        self._scan_failed = False
-        self._bulk_check = False  # Suppresses per-item header syncs during bulk edits.
-        # Table bookkeeping: row index <-> entry, plus the latest snapshot of each.
-        self._row_keys: List[EntryKey] = []
-        self._row_of: Dict[EntryKey, int] = {}
-        self._entries: Dict[EntryKey, UpdateEntry] = {}
-        # Downloads counted by the progress bar until they all finish.
-        self._download_batch: Set[EntryKey] = set()
 
         self.setWindowTitle("Nexus Auto Updater")
         self.resize(1150, 760)
 
-        self._summary = QLabel(f"Checking {plan.total} {scope_label} against Nexus…")
+        self._summary = QLabel()
+        self._summary.setObjectName("summary")
         self._summary.setWordWrap(True)
         self._progress = QProgressBar()
-        self._progress.setRange(0, max(1, plan.total))
+        self._progress.setObjectName("progress")
+        self._progress.setVisible(False)
 
         self._hide_current = QCheckBox("Hide up-to-date")
+        self._hide_current.setObjectName("hide_current")
         self._hide_current.setChecked(True)
-        self._hide_current.toggled.connect(self._apply_row_visibility)
 
-        self._table = QTableWidget(0, len(HEADERS))
+        self._model = UpdatesModel(sync, self)
+        self._proxy = HideCurrentProxy(self._model, self)
+        self._proxy.set_hide_current(self._hide_current.isChecked())
+        self._hide_current.toggled.connect(self._proxy.set_hide_current)
+
+        self._table = QTableView()
+        self._table.setObjectName("updates")
         header = CheckableHeader(COL_CHECK, self._table)
-        header.toggled.connect(self._set_all_checked)
+        header.toggled.connect(sync.set_all_selected)
         self._header = header
         self._table.setHorizontalHeader(header)
-        self._table.setHorizontalHeaderLabels(HEADERS)
-        present(self._table.horizontalHeaderItem(COL_CHECK)).setToolTip("Select / deselect all updates")
-        present(self._table.horizontalHeaderItem(COL_LOCK)).setToolTip(text.LOCK_TOOLTIP)
+        self._table.setModel(self._proxy)
         present(self._table.verticalHeader()).setVisible(False)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self._table.itemChanged.connect(self._on_item_changed)
         self._check_delegate = CenteredCheckDelegate(self._table)
         for column in (COL_CHECK, COL_LOCK):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
@@ -103,9 +105,10 @@ class UpdaterDialog(QDialog):
             self._table.setColumnWidth(column, 250)
         header.setSectionResizeMode(COL_STATUS, QHeaderView.ResizeMode.ResizeToContents)
         header.setStretchLastSection(True)
-        self._table.currentCellChanged.connect(self._on_current_row_changed)
+        present(self._table.selectionModel()).currentChanged.connect(self._on_current_changed)
 
         self._notes = NotesPane(notes)
+        self._notes.setObjectName("notes")
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.addWidget(self._table)
         splitter.addWidget(self._notes)
@@ -113,8 +116,10 @@ class UpdaterDialog(QDialog):
         splitter.setStretchFactor(1, 2)
 
         self._download_button = QPushButton("Download checked")
-        self._download_button.clicked.connect(self._download_checked)
+        self._download_button.setObjectName("download_button")
+        self._download_button.clicked.connect(sync.download_selected)
         self._install_button = QPushButton("Install downloaded…")
+        self._install_button.setObjectName("install_button")
         self._install_button.clicked.connect(self._install_downloaded)
         close_button = QPushButton("Close")
         close_button.clicked.connect(self.reject)
@@ -132,238 +137,102 @@ class UpdaterDialog(QDialog):
         layout.addWidget(splitter, 1)
         layout.addLayout(buttons)
 
-        session.subscribe(self._on_entry_changed)
-        self._update_buttons()
-        QTimer.singleShot(0, self._start_scan)
+        sync.subscribe(self._on_change)
+        self._render_status()
+        QTimer.singleShot(0, sync.start)
 
-    # --- Scanning ---
+    # --- Sync notifications ---
 
-    def _start_scan(self) -> None:
-        if self._plan.is_empty:
+    def _on_change(self, change: SyncChange) -> None:
+        match change:
+            case RowsAdded(keys=keys):
+                self._model.rows_added(keys)
+            case RowChanged(key=key):
+                self._model.row_changed(key)
+            case StatusChanged():
+                self._render_status()
+            case _:
+                assert_never(change)
+
+    def _on_current_changed(self, current: QModelIndex, previous: QModelIndex) -> None:
+        self._notes.show_entry(self._proxy.entry_of(current))
+
+    # --- Status ---
+
+    def _render_status(self) -> None:
+        status = self._sync.status()
+        self._render_activity(status)
+        self._header.set_state(status.select_all is SelectAll.ALL, status.can_download)
+        # The scan and the downloads share one summary and bar, so downloads wait for the scan.
+        scanning = isinstance(status.scan, Scanning)
+        self._download_button.setEnabled(status.can_download and not scanning)
+        self._install_button.setEnabled(status.can_install)
+
+    def _render_activity(self, status: SyncStatus) -> None:
+        scan = status.scan
+        match scan:
+            case NotStarted():
+                self._show("", None)
+            case NothingToScan():
+                self._show(self._empty_message, None)
+            case Scanning(done=done, total=total, current=current):
+                self._show(self._scanning_text(done, total, current), (done, max(1, total)))
+            case Stopped(failure=failure):
+                self._show_downloads_or(status, text.scan_failed_message(failure))
+            case Complete():
+                self._show_downloads_or(status, self._scan_summary())
+            case _:
+                assert_never(scan)
+
+    def _show_downloads_or(self, status: SyncStatus, scan_result: str) -> None:
+        batch = status.batch
+        match batch:
+            case NoBatch():
+                self._show(scan_result, None)
+            case InProgress(done=done):
+                self._show(
+                    f"Downloading updates: {done}/{batch.total} finished.", (done, batch.total)
+                )
+            case Finished(downloaded=downloaded, failed=failed):
+                self._show(
+                    f"Downloads complete: {downloaded} downloaded, {failed} failed."
+                    + (" Use 'Install downloaded…' to install them." if downloaded else ""),
+                    None,
+                )
+            case _:
+                assert_never(batch)
+
+    def _show(self, summary: str, progress: Optional[Tuple[int, int]]) -> None:
+        self._summary.setText(summary)
+        if progress is None:
             self._progress.setVisible(False)
-            self._summary.setText(self._empty_message)
             return
-        self._worker = ScanWorker(self._plan, self)
-        self._worker.scan_event.connect(self._on_scan_event)
-        self._worker.finished.connect(self._on_scan_finished)
-        self._scanning = True
-        self._update_buttons()
-        self._worker.start()
+        value, maximum = progress
+        self._progress.setRange(0, maximum)
+        self._progress.setValue(value)
+        self._progress.setVisible(True)
 
-    def _on_scan_event(self, event) -> None:
-        if isinstance(event, ModScanned):
-            for entry in self._session.record_scan(event.scan):
-                self._add_row(entry)
-            self._update_buttons()
-        elif isinstance(event, ScanProgress):
-            self._progress.setRange(0, max(1, event.total))
-            self._progress.setValue(event.done)
-            if event.mod_name:
-                self._summary.setText(f"Checking {event.done + 1}/{event.total}: {event.mod_name}")
-        elif isinstance(event, ScanFailed):
-            self._scan_failed = True
-            self._summary.setText(text.scan_failed_message(event))
+    def _scanning_text(self, done: int, total: int, current: str) -> str:
+        if current:
+            return f"Checking {done + 1}/{total}: {current}"
+        if done == 0:
+            return f"Checking {total} {self._scope_label} against Nexus…"
+        return f"Checking {done}/{total}…"
 
-    def _on_scan_finished(self) -> None:
-        self._scanning = False
-        self._progress.setVisible(False)
-        self._update_buttons()
-        if self._scan_failed:
-            return  # Keep the error message visible.
-        counts = {label: 0 for label in text.FINDING_LABELS}
-        for entry in self._entries.values():
-            counts[text.finding_label(entry.finding)] += 1
-        self._summary.setText(
+    def _scan_summary(self) -> str:
+        counts = Counter(
+            text.finding_label(self._sync.entry(key).finding) for key in self._sync.rows()
+        )
+        return (
             "Scan complete — "
-            + ", ".join(f"{label}: {count}" for label, count in counts.items() if count)
+            + ", ".join(f"{label}: {counts[label]}" for label in text.FINDING_LABELS if counts[label])
             + ". Rows marked 'Needs review' are unchecked; verify before downloading."
-        )
-
-    # --- Table ---
-
-    def _add_row(self, entry: UpdateEntry) -> None:
-        index = self._table.rowCount()
-        self._table.insertRow(index)
-        self._row_keys.append(entry.key)
-        self._row_of[entry.key] = index
-        self._entries[entry.key] = entry
-        self._render(index, initial=True)
-        self._table.setRowHidden(index, self._hidden(entry))
-
-    def _hidden(self, entry: UpdateEntry) -> bool:
-        return self._hide_current.isChecked() and isinstance(entry.finding, UpToDate)
-
-    def _render(self, index: int, initial: bool = False) -> None:
-        self._bulk_check = True
-        try:
-            self._render_cells(index, initial)
-        finally:
-            self._bulk_check = False
-        self._sync_header()
-
-    def _render_cells(self, index: int, initial: bool) -> None:
-        entry = self._entries[self._row_keys[index]]
-
-        check = self._table.item(index, COL_CHECK)
-        if check is None:
-            check = QTableWidgetItem()
-            self._table.setItem(index, COL_CHECK, check)
-        flags = Qt.ItemFlag.ItemIsEnabled
-        if downloadable(entry) is not None:
-            flags |= Qt.ItemFlag.ItemIsUserCheckable
-        check.setFlags(flags)
-        if initial:
-            offer = downloadable(entry)
-            ready = offer is not None and not offer.needs_review
-            check.setCheckState(Qt.CheckState.Checked if ready else Qt.CheckState.Unchecked)
-        elif downloadable(entry) is None:
-            check.setCheckState(Qt.CheckState.Unchecked)
-
-        lock = self._table.item(index, COL_LOCK)
-        if lock is None:
-            lock = QTableWidgetItem()
-            lock.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
-            lock.setToolTip(text.LOCK_TOOLTIP)
-            self._table.setItem(index, COL_LOCK, lock)
-        lock.setCheckState(Qt.CheckState.Checked if entry.locked else Qt.CheckState.Unchecked)
-
-        mod_item = QTableWidgetItem(entry.mod_name)
-        mod_item.setToolTip(text.mod_tooltip(entry))
-        self._table.setItem(index, COL_MOD, mod_item)
-
-        installed = installed_of(entry.finding)
-        installed_file = installed.file if installed else None
-        installed_item = QTableWidgetItem(
-            text.file_label(installed_file, installed.file_id if installed else None)
-        )
-        installed_item.setToolTip(text.file_tooltip(installed_file))
-        self._table.setItem(index, COL_INSTALLED, installed_item)
-
-        target = entry.finding.target if isinstance(entry.finding, Offered) else None
-        target_item = QTableWidgetItem(text.file_label(target))
-        target_item.setToolTip(text.file_tooltip(target))
-        self._table.setItem(index, COL_TARGET, target_item)
-
-        status_item = QTableWidgetItem(text.status_text(entry))
-        self._table.setItem(index, COL_STATUS, status_item)
-
-        reason = text.finding_detail(entry.finding)
-        details = reason
-        archive = text.archive_of(entry.progress)
-        if archive:
-            details += f"\nArchive: {archive}"
-        details_item = QTableWidgetItem(reason)
-        details_item.setToolTip(details)
-        self._table.setItem(index, COL_DETAILS, details_item)
-
-        if entry.locked:
-            grey = QBrush(QColor(text.LOCKED_COLOR))
-            for column in (COL_MOD, COL_INSTALLED, COL_TARGET, COL_STATUS, COL_DETAILS):
-                present(self._table.item(index, column)).setForeground(grey)
-        else:
-            status_item.setForeground(QBrush(QColor(text.status_color(entry))))
-
-    def _apply_row_visibility(self) -> None:
-        for index, key in enumerate(self._row_keys):
-            self._table.setRowHidden(index, self._hidden(self._entries[key]))
-
-    def _checkable_items(self) -> List[QTableWidgetItem]:
-        items = []
-        for index in range(self._table.rowCount()):
-            item = self._table.item(index, COL_CHECK)
-            if item is not None and item.flags() & Qt.ItemFlag.ItemIsUserCheckable:
-                items.append(item)
-        return items
-
-    def _sync_header(self) -> None:
-        items = self._checkable_items()
-        all_checked = bool(items) and all(
-            item.checkState() == Qt.CheckState.Checked for item in items
-        )
-        self._header.set_state(all_checked, bool(items))
-
-    def _set_all_checked(self, checked: bool) -> None:
-        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
-        self._bulk_check = True
-        try:
-            for item in self._checkable_items():
-                item.setCheckState(state)
-        finally:
-            self._bulk_check = False
-        self._sync_header()
-
-    def _on_item_changed(self, item: QTableWidgetItem) -> None:
-        if self._bulk_check:
-            return
-        if item.column() == COL_CHECK:
-            self._sync_header()
-        elif item.column() == COL_LOCK:
-            entry = self._entries[self._row_keys[item.row()]]
-            # Re-renders every row of the mod through _on_entry_changed.
-            self._session.set_locked(entry.mod_id, item.checkState() == Qt.CheckState.Checked)
-
-    def _on_current_row_changed(self, row: int, *_previous) -> None:
-        key = self._row_keys[row] if 0 <= row < len(self._row_keys) else None
-        self._notes.show_entry(self._entries.get(key) if key is not None else None)
-
-    def _update_buttons(self) -> None:
-        # The progress bar is shared, so downloads wait for the scan to finish.
-        entries = self._entries.values()
-        self._download_button.setEnabled(
-            not self._scanning and any(downloadable(e) for e in entries)
-        )
-        self._install_button.setEnabled(any(installable(e) for e in entries))
-
-    def _on_entry_changed(self, entry: UpdateEntry) -> None:
-        index = self._row_of.get(entry.key)
-        if index is None:
-            return
-        self._entries[entry.key] = entry
-        self._render(index)
-        self._update_buttons()
-        self._update_download_progress()
-
-    def _update_download_progress(self) -> None:
-        batch = self._download_batch
-        if not batch:
-            return
-        total = len(batch)
-        progress = [self._entries[key].progress for key in batch]
-        done = sum(1 for step in progress if not isinstance(step, (Queued, Downloading)))
-        if done < total:
-            self._progress.setRange(0, total)
-            self._progress.setValue(done)
-            self._progress.setVisible(True)
-            self._summary.setText(f"Downloading updates: {done}/{total} finished.")
-            return
-
-        failed = sum(1 for step in progress if isinstance(step, DownloadFailed))
-        batch.clear()
-        self._progress.setVisible(False)
-        self._summary.setText(
-            f"Downloads complete: {total - failed} downloaded, {failed} failed."
-            + (" Use 'Install downloaded…' to install them." if total > failed else "")
         )
 
     # --- Actions ---
 
-    def _download_checked(self) -> None:
-        for index, key in enumerate(self._row_keys):
-            check = self._table.item(index, COL_CHECK)
-            if check is None or check.checkState() != Qt.CheckState.Checked:
-                continue
-            if downloadable(self._entries[key]) is None:
-                continue
-            # Add first: the session reports the QUEUED change synchronously.
-            self._download_batch.add(key)
-            self._session.download(key)
-        self._update_buttons()
-        self._update_download_progress()
-
     def _install_downloaded(self) -> None:
-        keys = [key for key in self._row_keys if installable(self._entries[key])]
-        if not keys:
-            return
+        keys = self._sync.status().installable
         answer = QMessageBox.question(
             self,
             "Install downloaded updates",
@@ -373,14 +242,10 @@ class UpdaterDialog(QDialog):
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        for key in keys:
-            self._session.install(key)
+        self._sync.install_downloaded(keys)
 
     # --- Lifetime ---
 
     def done(self, a0: int) -> None:
-        if self._worker is not None and self._worker.isRunning():
-            self._worker.requestInterruption()
-            self._worker.wait(5000)
-        self._session.subscribe(None)
+        self._sync.close()
         super().done(a0)
