@@ -149,7 +149,7 @@ class UpdateSession:
         installer: Installer,
         tracker: DownloadTracker,
         locks: ModLocks,
-        max_concurrent_downloads: int,
+        max_concurrent_downloads: Callable[[], int],
     ):
         self._downloader = downloader
         self._installer = installer
@@ -246,7 +246,7 @@ class UpdateSession:
         self._listener = None
 
     def _start_queued(self) -> None:
-        while self._queue and len(self._awaiting) < self._max_downloads:
+        while self._queue and len(self._awaiting) < self._max_downloads():
             key = next(iter(self._queue))
             target = self._queue.pop(key)
             entry = self._entries[key]

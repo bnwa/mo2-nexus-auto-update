@@ -77,7 +77,7 @@ class NexusAutoUpdater(mobase.IPluginTool):
             ),
             mobase.PluginSetting(
                 SETTING_MAX_DOWNLOADS,
-                "Maximum simultaneous downloads (read when the tool is opened)",
+                "Maximum simultaneous downloads",
                 DEFAULT_MAX_DOWNLOADS,
             ),
         ]
@@ -109,7 +109,7 @@ class NexusAutoUpdater(mobase.IPluginTool):
         game = self._host.managed_game()
         plan = ScanPlan(source, game, self._host.nexus_mods(not scan_all))
         session = UpdateSession(
-            self._host, self._host, self._tracker, self._host, self._max_concurrent_downloads()
+            self._host, self._host, self._tracker, self._host, self._max_concurrent_downloads
         )
 
         # Parented like the dialog: Qt must outlive display() if a scan request is still in flight.

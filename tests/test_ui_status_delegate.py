@@ -66,7 +66,7 @@ class StatusTestCase(QtTestCase):
         self.ids = ArchiveIds()
         self.tracker = DownloadTracker(self.ids, ManualScheduler())
         self.installer = FakeInstaller()
-        session = UpdateSession(FakeDownloader(), self.installer, self.tracker, FakeLocks(), self.max_downloads)
+        session = UpdateSession(FakeDownloader(), self.installer, self.tracker, FakeLocks(), lambda: self.max_downloads)
         self.runner = FakeScanRunner()
         self.sync = Sync(session, ScanPlan(FakeSource({}), GAME, [installed_mod(1)]), self.runner)
         self.model = UpdatesModel(self.sync)

@@ -91,7 +91,7 @@ class DialogTestCase(QtTestCase):
         self.downloader = FakeDownloader()
         self.installer = FakeInstaller(installer_result)
         self.locks = locks or FakeLocks()
-        self.session = UpdateSession(self.downloader, self.installer, self.tracker, self.locks, self.max_downloads)
+        self.session = UpdateSession(self.downloader, self.installer, self.tracker, self.locks, lambda: self.max_downloads)
         self.runner = QtScanRunner() if threaded or gate_mod is not None else FakeScanRunner(synchronous=True)
         self.sync = Sync(self.session, ScanPlan(self.source, GAME, mods), self.runner)
         self.dialog = UpdaterDialog(

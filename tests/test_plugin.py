@@ -200,7 +200,9 @@ class DisplayTest(PluginTestCase):
         self.assertIs(self.plugin._host, session._installer)
         self.assertIs(self.plugin._host, session._locks)
         self.assertIs(self.plugin._tracker, session._tracker)
-        self.assertEqual(2, session._max_downloads)
+        self.assertEqual(2, session._max_downloads())
+        self.organizer.settings["max_concurrent_downloads"] = 4
+        self.assertEqual(4, session._max_downloads())
         self.assertIs(dialog.plan._source, dialog.notes._source)
         self.assertEqual(self.plugin._host.managed_game(), dialog.plan._game)
 

@@ -62,7 +62,7 @@ class SessionTestCase(unittest.TestCase):
         self.installer = FakeInstaller()
         self.locks = FakeLocks()
         self.session = UpdateSession(
-            self.downloader, self.installer, self.tracker, self.locks, self.max_downloads
+            self.downloader, self.installer, self.tracker, self.locks, lambda: self.max_downloads
         )
         self.changes = []
         self.session.subscribe(self.changes.append)
@@ -190,7 +190,7 @@ class DownloadTest(SessionTestCase):
         self.assertEqual([(1, 101)], self.downloader.calls)
 
     def test_queued_or_downloading_cannot_be_queued_twice(self):
-        session = UpdateSession(self.downloader, self.installer, self.tracker, self.locks, 1)
+        session = UpdateSession(self.downloader, self.installer, self.tracker, self.locks, lambda: 1)
         a, b = (session.record_scan(ModChecked(installed_mod(i, (i,)), (selection(i),)))[0] for i in (1, 2))
         session.download(a.key)
         session.download(b.key)
@@ -267,6 +267,15 @@ class StrictOrderTest(SessionTestCase):
             [Downloaded, DownloadFailed, Downloaded], self.phases(*entries)
         )
 
+    def test_the_limit_is_read_each_time_a_download_could_start(self):
+        entries = [self.ready(i, i) for i in (1, 2, 3)]
+        for entry in entries:
+            self.session.download(entry.key)
+        self.assertEqual(1, len(self.downloader.calls))
+        self.max_downloads = 3
+        self.finish(entries[0])
+        self.assertEqual(3, len(self.downloader.calls))
+
     def test_dequeued_entry_does_not_hold_a_slot(self):
         a, b, c = (self.ready(i, i) for i in (1, 2, 3))
         for entry in (a, b, c):
@@ -297,7 +306,7 @@ class LockTest(SessionTestCase):
         self.assertFalse(self.entry(other.key).locked)
 
     def test_locking_queued_dequeues_to_idle(self):
-        session = UpdateSession(self.downloader, self.installer, self.tracker, self.locks, 1)
+        session = UpdateSession(self.downloader, self.installer, self.tracker, self.locks, lambda: 1)
         session.subscribe(self.changes.append)
         a, b = (session.record_scan(ModChecked(installed_mod(i, (i,)), (selection(i),)))[0] for i in (1, 2))
         session.download(a.key)

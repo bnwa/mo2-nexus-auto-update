@@ -65,7 +65,7 @@ class SyncTestCase(unittest.TestCase):
         self.locks = FakeLocks()
         self.runner = FakeScanRunner()
         self.session = UpdateSession(
-            self.downloader, self.installer, self.tracker, self.locks, self.max_downloads
+            self.downloader, self.installer, self.tracker, self.locks, lambda: self.max_downloads
         )
         self.plan = ScanPlan(FakeSource({}), GAME, list(self.plan_mods))
         self.sync = Sync(self.session, self.plan, self.runner)

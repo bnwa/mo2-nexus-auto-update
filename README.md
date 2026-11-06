@@ -65,7 +65,7 @@ In MO2, open **Settings → Plugins → Nexus Auto Updater**:
 |---|---|---|
 | `scan_all_nexus_mods` | off | Check every Nexus mod, not only the ones MO2 flags as outdated. Useful when MO2's update check is stale, but slower. |
 | `request_delay_ms` | 250 | Minimum delay between requests to Nexus, in milliseconds. Raise it if Nexus rate-limits you. |
-| `max_concurrent_downloads` | 3 | Maximum number of downloads running at once. The rest wait as **Queued** and start as earlier ones finish. Read when the tool is opened; reopen it after changing this. |
+| `max_concurrent_downloads` | 3 | Maximum number of downloads running at once. The rest wait as **Queued** and start as earlier ones finish. Changes apply to the next download that starts. |
 
 ## Troubleshooting
 

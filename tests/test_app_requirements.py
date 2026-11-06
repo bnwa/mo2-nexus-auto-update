@@ -61,7 +61,7 @@ class SessionGraphTest(unittest.TestCase):
             FakeInstaller(),
             DownloadTracker(ArchiveIds(), ManualScheduler()),
             FakeLocks(),
-            3,
+            lambda: 3,
         )
         self.assertIsNone(session.dependency_graph)
         graph = DependencyGraph([1], {1: ModRequirements(frozenset())})
