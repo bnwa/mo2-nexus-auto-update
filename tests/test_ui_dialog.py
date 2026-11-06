@@ -26,7 +26,15 @@ from tests.fakes import (
 
 if HAS_QT:
     from PyQt6.QtCore import Qt
-    from PyQt6.QtWidgets import QCheckBox, QLabel, QMessageBox, QProgressBar, QPushButton, QTableView
+    from PyQt6.QtWidgets import (
+        QCheckBox,
+        QLabel,
+        QMessageBox,
+        QProgressBar,
+        QPushButton,
+        QStyleOptionViewItem,
+        QTableView,
+    )
 
     from nexus_auto_updater.ui import dialog as dialog_module
     from nexus_auto_updater.ui.dialog import UpdaterDialog
@@ -153,6 +161,13 @@ class DialogTestCase(QtTestCase):
     def progress_hidden(self):
         return self.progress().isHidden()
 
+    def downloads(self):
+        label = self.dialog.findChild(QLabel, "downloads")
+        return None if label.isHidden() else label.text()
+
+    def spinning(self):
+        return self.table.itemDelegateForColumn(COL_STATUS).animating
+
     def button(self, name):
         return self.dialog.findChild(QPushButton, name)
 
@@ -252,7 +267,7 @@ class ScanDisplayTest(DialogTestCase):
         self.assertTrue(self.button("download_button").isEnabled())
         self.assertFalse(self.button("install_button").isEnabled())
 
-    def test_progress_and_disabled_download_while_scanning(self):
+    def test_progress_while_scanning(self):
         self.open(gate_mod=2)
         wait_until(lambda: self.summary() == "Checking 4 mods MO2 flags as having an update against Nexus…")
         wait_until(lambda: self.gate.entered.is_set() and self.model.rowCount() == 2
@@ -260,11 +275,11 @@ class ScanDisplayTest(DialogTestCase):
         progress = self.progress()
         self.assertEqual((0, 4, 1), (progress.minimum(), progress.maximum(), progress.value()))
         self.assertTrue(self.checked("Alpha"))
-        self.assertFalse(self.button("download_button").isEnabled())
         self.assertFalse(self.progress_hidden())
+        self.assertIsNone(self.downloads())
         self.gate.release.set()
         self.wait_scanned()
-        self.assertTrue(self.button("download_button").isEnabled())
+        self.assertTrue(self.progress_hidden())
 
     def test_scan_failure_message_persists(self):
         listings = dict(STANDARD_LISTINGS)
@@ -338,32 +353,65 @@ class DownloadTest(DialogTestCase):
         self.assertEqual(BLUE, self.colour("Alpha", COL_STATUS))
         self.assertFalse(self.checkable("Alpha"))
         self.assertFalse(self.checked("Alpha"))
-        self.assertEqual("Downloading updates: 0/1 finished.", self.summary())
-        self.assertFalse(self.progress_hidden())
+        self.assertEqual("Downloads: 0/1 finished", self.downloads())
+        self.assertTrue(self.summary().startswith("Scan complete"))
+        self.assertTrue(self.progress_hidden())
+        self.assertTrue(self.spinning())
         self.assertTrue(self.button("download_button").isEnabled())  # Beta can still be downloaded.
         path = self.finish_download(1, 2)
         self.assertEqual("Downloaded", self.status("Alpha"))
         self.assertIn(f"Archive: {path}", self.cell("Alpha", COL_DETAILS, role=Qt.ItemDataRole.ToolTipRole))
-        self.assertTrue(self.progress_hidden())
+        self.assertFalse(self.spinning())
         self.assertEqual(
-            "Downloads complete: 1 downloaded, 0 failed. Use 'Install downloaded…' to install them.", self.summary()
+            "Downloads complete: 1 downloaded, 0 failed. Use 'Install downloaded…' to install them.",
+            self.downloads(),
         )
+        self.assertTrue(self.summary().startswith("Scan complete"))
         self.assertTrue(self.button("install_button").isEnabled())
 
     def test_nothing_checked_downloads_nothing(self):
         self.open_scanned()
         self.set_checked("Alpha", False)
-        before = self.summary()
         self.button("download_button").click()
         self.assertEqual([], self.downloader.calls)
-        self.assertEqual(before, self.summary())
+        self.assertIsNone(self.downloads())
+        self.assertFalse(self.spinning())
 
-    def test_downloads_wait_for_the_scan_to_finish(self):
+    def test_downloads_start_during_the_scan_and_both_areas_update_independently(self):
         self.open(gate_mod=2)
         wait_until(lambda: self.gate.entered.is_set() and self.model.rowCount() == 2)
-        self.assertFalse(self.button("download_button").isEnabled())
+        self.assertTrue(self.button("download_button").isEnabled())
         self.button("download_button").click()
-        self.assertEqual([], self.downloader.calls)
+        self.assertEqual([(1, 2)], self.downloader.calls)
+        self.assertEqual("Downloads: 0/1 finished", self.downloads())
+        self.assertEqual("Checking 2/4: Beta", self.summary())
+        self.assertFalse(self.progress_hidden())
+        self.finish_download(1, 2)
+        self.assertTrue(self.downloads().startswith("Downloads complete"))
+        self.assertEqual("Checking 2/4: Beta", self.summary())
+        self.gate.release.set()
+        self.wait_scanned()
+        self.assertTrue(self.summary().startswith("Scan complete"))
+        self.assertTrue(self.downloads().startswith("Downloads complete"))
+
+    def test_a_stopped_scan_message_stays_beside_the_downloads(self):
+        listings = dict(STANDARD_LISTINGS)
+        listings[2] = SourceIncompatible("Nexus v2 API changed: GraphQL schema mismatch")
+        self.open_scanned(listings=listings)
+        message = self.summary()
+        self.button("download_button").click()
+        self.finish_download(1, 2)
+        self.assertEqual(message, self.summary())
+        self.assertTrue(self.downloads().startswith("Downloads complete"))
+
+    def test_the_status_column_is_wide_enough_for_the_icon(self):
+        self.open_scanned(mods=[ALPHA])
+        before = self.table.columnWidth(COL_STATUS)
+        self.button("download_button").click()
+        index = self.index("Alpha", COL_STATUS)
+        hint = self.table.itemDelegateForColumn(COL_STATUS).sizeHint(QStyleOptionViewItem(), index)
+        self.assertGreater(self.table.columnWidth(COL_STATUS), before)
+        self.assertGreaterEqual(self.table.columnWidth(COL_STATUS), hint.width())
 
 
 class QueueProgressTest(DialogTestCase):
@@ -374,35 +422,35 @@ class QueueProgressTest(DialogTestCase):
         self.set_checked("Beta")
         self.button("download_button").click()
         self.assertEqual(["Downloading", "Queued"], [self.status("Alpha"), self.status("Beta")])
-        self.assertEqual("Downloading updates: 0/2 finished.", self.summary())
-        self.assertEqual((0, 2), (self.progress().value(), self.progress().maximum()))
+        self.assertEqual("Downloads: 0/2 finished", self.downloads())
         self.finish_download(1, 2, succeeded=False)
         self.assertEqual(["Download failed", "Downloading"], [self.status("Alpha"), self.status("Beta")])
-        self.assertEqual("Downloading updates: 1/2 finished.", self.summary())
-        self.assertFalse(self.progress_hidden())
+        self.assertEqual("Downloads: 1/2 finished, 1 failed", self.downloads())
+        self.assertTrue(self.spinning())
         self.finish_download(2, 50)
-        self.assertTrue(self.progress_hidden())
+        self.assertFalse(self.spinning())
         self.assertEqual(
-            "Downloads complete: 1 downloaded, 1 failed. Use 'Install downloaded…' to install them.", self.summary()
+            "Downloads complete: 1 downloaded, 1 failed. Use 'Install downloaded…' to install them.",
+            self.downloads(),
         )
 
     def test_all_failed(self):
         self.open_scanned()
         self.button("download_button").click()
         self.finish_download(1, 2, succeeded=False)
-        self.assertEqual("Downloads complete: 0 downloaded, 1 failed.", self.summary())
+        self.assertEqual("Downloads complete: 0 downloaded, 1 failed.", self.downloads())
         self.assertTrue(self.checkable("Alpha"))  # A failed download can be retried.
         self.assertFalse(self.checked("Alpha"))
         self.assertFalse(self.button("install_button").isEnabled())
 
-    def test_later_changes_outside_a_batch_leave_the_summary(self):
+    def test_later_changes_outside_a_batch_leave_the_downloads_line(self):
         self.open_scanned()
         self.button("download_button").click()
         self.finish_download(1, 2)
-        summary = self.summary()
+        footer = self.downloads()
         with self.answer(QMessageBox.StandardButton.Yes):
             self.button("install_button").click()
-        self.assertEqual(summary, self.summary())
+        self.assertEqual(footer, self.downloads())
         self.assertEqual("Installed", self.status("Alpha"))
 
 
@@ -534,11 +582,18 @@ class LifetimeTest(DialogTestCase):
     def test_nothing_changes_once_closed(self):
         self.open_scanned()
         self.button("download_button").click()
-        summary = self.summary()
+        footer = self.downloads()
         self.dialog.done(0)
         self.finish_download(1, 2)
         self.assertEqual("Downloading", self.status("Alpha"))
-        self.assertEqual(summary, self.summary())
+        self.assertEqual(footer, self.downloads())
+
+    def test_closing_stops_the_spinner_of_an_unfinished_download(self):
+        self.open_scanned()
+        self.button("download_button").click()
+        self.assertTrue(self.spinning())
+        self.dialog.done(0)
+        self.assertFalse(self.spinning())
 
 
 class EndToEndTest(DialogTestCase):
@@ -557,13 +612,13 @@ class EndToEndTest(DialogTestCase):
         self.button("download_button").click()
         self.assertEqual([(12604, 1000172398)], self.downloader.calls)
         self.assertEqual("Downloading", self.status("SkyUI"))
-        self.assertFalse(self.progress_hidden())
+        self.assertEqual("Downloads: 0/1 finished", self.downloads())
 
         path = DOWNLOADS + archive
         self.archive_ids.ids[path] = (12604, 1000172398)
         self.tracker.download_finished(path, True)
         self.assertEqual("Downloaded", self.status("SkyUI"))
-        self.assertTrue(self.progress_hidden())
+        self.assertTrue(self.downloads().startswith("Downloads complete: 1 downloaded"))
         self.assertTrue(self.button("install_button").isEnabled())
 
         with self.answer(QMessageBox.StandardButton.Yes):

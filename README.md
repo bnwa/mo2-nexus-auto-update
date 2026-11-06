@@ -29,13 +29,13 @@ No API key needs to be entered in the plugin. It reads public file information f
 ## Usage
 
 1. **Let MO2 find outdated mods.** Run MO2's own *Check for updates* (the Nexus update check in the mod list). The plugin starts from the mods MO2 flags as having an update.
-2. **Open Tools → Nexus Auto Updater.** It checks each flagged mod against Nexus and fills a table as it goes. A progress bar shows how far along it is.
+2. **Open Tools → Nexus Auto Updater.** It checks each flagged mod against Nexus and fills a table as it goes. A progress bar at the top shows how far the check is.
 3. **Review the table.**
    - Rows marked **Ready** are ticked automatically.
    - Rows marked **Needs review** are not ticked: check the *Update to* column and tick them yourself if the suggestion looks right.
    - Use the checkbox in the column header to tick or untick every downloadable row at once.
    - *Hide up-to-date* (on by default) hides rows that don't need anything.
-4. **Click _Download checked_.** The downloads appear in MO2's Downloads tab, and the progress bar tracks them. Rows switch to **Downloaded** as they finish.
+4. **Click _Download checked_.** You can do this while the check is still running. The downloads appear in MO2's Downloads tab. A line below the table counts them (for example *Downloads: 2/5 finished, 1 failed*), and each row shows a small icon next to its status: a spinner while it downloads, a faint ring while it waits, a tick when it is downloaded or installed, a cross if it failed. Rows switch to **Downloaded** as they finish.
 5. **Click _Install downloaded…_.** MO2 installs each update in turn:
    - When it asks what to do with the existing mod, choose **Replace** to keep the mod's position and enabled state.
    - Mods with a FOMOD installer show their installer as usual.

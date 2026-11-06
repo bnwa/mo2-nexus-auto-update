@@ -17,6 +17,8 @@ from . import text
 COL_CHECK, COL_LOCK, COL_MOD, COL_INSTALLED, COL_TARGET, COL_STATUS, COL_DETAILS = range(7)
 HEADERS = ["", text.LOCK_HEADER, "Mod", "Installed file", "Update to", "Status", "Details"]
 SELECT_ALL_TOOLTIP = "Select / deselect all updates"
+# The status cell's `Progress`, for a delegate that draws its stage.
+PROGRESS_ROLE = Qt.ItemDataRole.UserRole + 1
 
 
 class UpdatesModel(QAbstractTableModel):
@@ -85,6 +87,8 @@ class UpdatesModel(QAbstractTableModel):
             return _tooltip(entry, column)
         if role == Qt.ItemDataRole.ForegroundRole:
             return _foreground(entry, column)
+        if role == PROGRESS_ROLE and column == COL_STATUS:
+            return entry.progress
         return None
 
     def setData(

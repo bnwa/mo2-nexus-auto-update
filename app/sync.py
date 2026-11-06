@@ -123,6 +123,7 @@ class InProgress:
 
     keys: FrozenSet[EntryKey]
     done: int
+    failed: int
 
     @property
     def total(self) -> int:
@@ -140,10 +141,10 @@ BatchState = Union[NoBatch, InProgress, Finished]
 
 def batch_started(batch: BatchState, key: EntryKey) -> BatchState:
     match batch:
-        case InProgress(keys=keys, done=done):
-            return InProgress(keys | {key}, done)
+        case InProgress(keys=keys, done=done, failed=failed):
+            return InProgress(keys | {key}, done, failed)
         case NoBatch() | Finished():
-            return InProgress(frozenset({key}), 0)
+            return InProgress(frozenset({key}), 0, 0)
         case _:
             assert_never(batch)
 
@@ -153,9 +154,9 @@ def batch_settled(batch: BatchState, progress_of: Callable[[EntryKey], Progress]
         case InProgress(keys=keys):
             steps = [progress_of(key) for key in keys]
             done = sum(1 for step in steps if not isinstance(step, (Queued, Downloading)))
-            if done < len(keys):
-                return InProgress(keys, done)
             failed = sum(1 for step in steps if isinstance(step, DownloadFailed))
+            if done < len(keys):
+                return InProgress(keys, done, failed)
             return Finished(len(keys) - failed, failed)
         case NoBatch() | Finished():
             return batch

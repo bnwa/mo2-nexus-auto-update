@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 
 from ..app.notes import ModNotes
 from ..app.sync import (
+    BatchState,
     Complete,
     Finished,
     InProgress,
@@ -28,17 +29,18 @@ from ..app.sync import (
     RowChanged,
     RowsAdded,
     Scanning,
+    ScanState,
     SelectAll,
     Stopped,
     StatusChanged,
     Sync,
     SyncChange,
-    SyncStatus,
 )
 from . import text
 from .header import CenteredCheckDelegate, CheckableHeader
 from .notes import NotesPane
 from .qt_types import present
+from .status_delegate import StatusDelegate
 from .table_model import (
     COL_CHECK,
     COL_INSTALLED,
@@ -103,6 +105,8 @@ class UpdaterDialog(QDialog):
         for column in (COL_MOD, COL_INSTALLED, COL_TARGET):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
             self._table.setColumnWidth(column, 250)
+        self._status_delegate = StatusDelegate(self._table)
+        self._table.setItemDelegateForColumn(COL_STATUS, self._status_delegate)
         header.setSectionResizeMode(COL_STATUS, QHeaderView.ResizeMode.ResizeToContents)
         header.setStretchLastSection(True)
         present(self._table.selectionModel()).currentChanged.connect(self._on_current_changed)
@@ -114,6 +118,10 @@ class UpdaterDialog(QDialog):
         splitter.addWidget(self._notes)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
+
+        self._downloads = QLabel()
+        self._downloads.setObjectName("downloads")
+        self._downloads.setVisible(False)
 
         self._download_button = QPushButton("Download checked")
         self._download_button.setObjectName("download_button")
@@ -135,6 +143,7 @@ class UpdaterDialog(QDialog):
         layout.addWidget(self._summary)
         layout.addWidget(self._progress)
         layout.addWidget(splitter, 1)
+        layout.addWidget(self._downloads)
         layout.addLayout(buttons)
 
         sync.subscribe(self._on_change)
@@ -161,15 +170,16 @@ class UpdaterDialog(QDialog):
 
     def _render_status(self) -> None:
         status = self._sync.status()
-        self._render_activity(status)
+        self._render_scan(status.scan)
+        self._render_downloads(status.batch)
+        # Downloads only start through the batch, so a row is queued or downloading
+        # exactly while the batch is in progress.
+        self._status_delegate.set_animating(isinstance(status.batch, InProgress))
         self._header.set_state(status.select_all is SelectAll.ALL, status.can_download)
-        # The scan and the downloads share one summary and bar, so downloads wait for the scan.
-        scanning = isinstance(status.scan, Scanning)
-        self._download_button.setEnabled(status.can_download and not scanning)
+        self._download_button.setEnabled(status.can_download)
         self._install_button.setEnabled(status.can_install)
 
-    def _render_activity(self, status: SyncStatus) -> None:
-        scan = status.scan
+    def _render_scan(self, scan: ScanState) -> None:
         match scan:
             case NotStarted():
                 self._show("", None)
@@ -178,29 +188,28 @@ class UpdaterDialog(QDialog):
             case Scanning(done=done, total=total, current=current):
                 self._show(self._scanning_text(done, total, current), (done, max(1, total)))
             case Stopped(failure=failure):
-                self._show_downloads_or(status, text.scan_failed_message(failure))
+                self._show(text.scan_failed_message(failure), None)
             case Complete():
-                self._show_downloads_or(status, self._scan_summary())
+                self._show(self._scan_summary(), None)
             case _:
                 assert_never(scan)
 
-    def _show_downloads_or(self, status: SyncStatus, scan_result: str) -> None:
-        batch = status.batch
+    def _render_downloads(self, batch: BatchState) -> None:
         match batch:
             case NoBatch():
-                self._show(scan_result, None)
-            case InProgress(done=done):
-                self._show(
-                    f"Downloading updates: {done}/{batch.total} finished.", (done, batch.total)
-                )
+                self._downloads.setVisible(False)
+                return
+            case InProgress(done=done, failed=failed):
+                failures = f", {failed} failed" if failed else ""
+                self._downloads.setText(f"Downloads: {done}/{batch.total} finished{failures}")
             case Finished(downloaded=downloaded, failed=failed):
-                self._show(
+                self._downloads.setText(
                     f"Downloads complete: {downloaded} downloaded, {failed} failed."
-                    + (" Use 'Install downloaded…' to install them." if downloaded else ""),
-                    None,
+                    + (" Use 'Install downloaded…' to install them." if downloaded else "")
                 )
             case _:
                 assert_never(batch)
+        self._downloads.setVisible(True)
 
     def _show(self, summary: str, progress: Optional[Tuple[int, int]]) -> None:
         self._summary.setText(summary)
@@ -247,5 +256,7 @@ class UpdaterDialog(QDialog):
     # --- Lifetime ---
 
     def done(self, a0: int) -> None:
+        # Closing leaves any in-flight download unsettled, so the batch would keep animating.
+        self._status_delegate.set_animating(False)
         self._sync.close()
         super().done(a0)
